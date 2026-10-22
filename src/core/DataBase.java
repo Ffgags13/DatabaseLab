@@ -1,7 +1,10 @@
 package core;
 
 import dao.Repository;
+
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 
 public class DataBase {
@@ -9,6 +12,8 @@ public class DataBase {
     private final Repository<Table> repo;
 
     public DataBase(Repository<Table> repo) { this.repo = repo; }
+
+    private final Map<String, Column> schemaMap= new LinkedHashMap<>();
 
     public Table getTable(String name) {
         return repo.findById(name)
@@ -18,7 +23,8 @@ public class DataBase {
 
     public void createTable(String name, List<Column> schema) {
         if (repo.exists(name)) throw new IllegalStateException("Таблица уже есть: " + name);
-        repo.save(new Table(name, schema));
+        schema.forEach(column -> {this.schemaMap.put(column.getName(),column);});
+        repo.save(new Table(name, schemaMap));
     }
 
     public void dropTable(String name) {

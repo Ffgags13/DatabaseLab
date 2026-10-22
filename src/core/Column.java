@@ -10,23 +10,30 @@ public final class Column {
 
     private final String name;
     private final ColumnType type;
-    private final boolean primaryKey;
+    //private final boolean primaryKey;
     private final boolean nullable;
 
-    public Column(String name, ColumnType type, boolean primaryKey, boolean nullable) {
-        if (name == null || name.isBlank())
-            throw new IllegalArgumentException("Имя колонки пустое");
-        if (primaryKey && nullable)
-            throw new IllegalArgumentException("PK не может быть NULL");
+    private final Object defaultValue;
+
+    public Column(String name, ColumnType type, boolean nullable) {
         this.name = name;
         this.type = type;
-        this.primaryKey = primaryKey;
         this.nullable = nullable;
+        this.defaultValue = null;
+
     }
 
-    public String name()       { return name; }
+    public Column(String name, ColumnType type, boolean nullable, Object defaultValue) {
+        this.name = name;
+        this.type = type;
+        this.nullable = nullable;
+        this.defaultValue = defaultValue;
+
+    }
+
+    //public String name()       { return name; }
     public ColumnType type()   { return type; }
-    public boolean primaryKey(){ return primaryKey; }
+   // public boolean primaryKey(){ return primaryKey; }
     public boolean nullable()  { return nullable; }
 
     public Object check(Object raw) {
@@ -98,8 +105,11 @@ public final class Column {
 
     @Override public String toString() {
         return name + " " + type
-                + (primaryKey ? " PRIMARY KEY" : "")
+                + ("DEFAULT: " + defaultValue  + " ")
                 + (!nullable  ? " NOT NULL"    : "");
     }
 
+    public String getName() {
+        return name;
+    }
 }

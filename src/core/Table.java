@@ -5,14 +5,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class Table {
-    private final Map<String, Column> schema = new LinkedHashMap<>();
+    private final Map<String, Column> schema;
     private final Map<Object, Row> rows = new LinkedHashMap<>();
-
-    public Table(Map<String, ColumnType> columnTypes){
-        if (columnTypes == null || columnTypes.isEmpty()) {
-            throw new IllegalArgumentException("Схема не может быть пустой");
-        }
-        columnTypes.forEach((name, type) -> { this.schema.put(name, new Column(name, type, false, false));});
+    private final String name;
+    public Table(String name, Map<String, Column> schema){
+            if (schema == null || schema.isEmpty()) {
+                throw new IllegalArgumentException("Схема не может быть пустой");
+            }
+            this.name = name;
+            //columnTypes.forEach((name, type) -> { this.schema.put(name, new Column(name, type, false, false));});
+            this.schema = new LinkedHashMap<>();
     }
 
 
