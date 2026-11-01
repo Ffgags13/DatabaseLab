@@ -1,6 +1,6 @@
 package core;
 
-import java.io.Serializable;
+//import java.io.Serializable;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -14,6 +14,9 @@ public final class TableSchema{
     private final String tableName;
     public TableSchema(String tableName , ColumnDef[] cols) {
         this.tableName = tableName;
+        if(cols[0].nullable()){
+            throw new NullPointerException("Первый столбец может быть null");
+        }
         for (ColumnDef col : cols) {
             if (columnsByName.containsKey(col.name())) {
                 throw new DuplicateColumnNameException("Имя столбца " + col.name() + " используется дважды. ");
@@ -31,5 +34,13 @@ public final class TableSchema{
         }
         return(columnsByName.get(colName));
     }
+
+    public String getTableName() {
+        return tableName;
     }
+
+    public ColumnDef[] getColumns() {
+        return columnsByName.values().toArray(new ColumnDef[0]);
+    }
+}
 
