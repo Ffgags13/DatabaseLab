@@ -19,7 +19,7 @@ public class RecordCodec {
             case Long l -> {
                 return Math.toIntExact(l);
             }
-            default -> throw new IllegalArgumentException("Колонка " + colName + "ожидает INT, получено:" + item.getClass().getSimpleName());
+            default -> throw new IllegalArgumentException("Колонка " + colName + "ожидает INT, получено: " + item.getClass().getSimpleName());
         }
     }
     private static double requireDouble(String colName, Object item){
@@ -41,7 +41,7 @@ public class RecordCodec {
             }
             default -> {
                 throw new IllegalArgumentException("Колонка "
-                    + colName + "ожидает DOUBLE, получено:"
+                    + colName + "ожидает DOUBLE, получено: "
                     + item.getClass().getSimpleName());
             }
         }
@@ -51,7 +51,7 @@ public class RecordCodec {
         if(item instanceof Boolean b){
             return b;}
         throw new IllegalArgumentException("Колонка "
-                        + colName + "ожидает Boolean, получено:"
+                        + colName + "ожидает Boolean, получено: "
                         + item.getClass().getSimpleName());
     }
     private static String requireString(String colName, Object item){
@@ -59,7 +59,7 @@ public class RecordCodec {
         if(item instanceof String s){
             return s;}
         throw new IllegalArgumentException("Колонка "
-                + colName + "ожидает String, получено:"
+                + colName + "ожидает String, получено: "
                 + item.getClass().getSimpleName());
     }
     private static LocalDate requireDate(String colName, Object item){
@@ -67,7 +67,7 @@ public class RecordCodec {
         if(item instanceof LocalDate d){
             return d;}
         throw new IllegalArgumentException("Колонка "
-                + colName + "ожидает Date, получено:"
+                + colName + "ожидает Date, получено: "
                 + item.getClass().getSimpleName());
     }
 
@@ -83,6 +83,9 @@ public class RecordCodec {
            for (ColumnDef col : schema.getColumns()) {
                Object item = row.get(col.name());
                if (item == null) {
+                    if(!col.nullable()){
+                        throw new IllegalArgumentException("null в не nullable столбце " + col.name());
+                    }
                     outContainer.writeByte(1);
                     continue;
                }

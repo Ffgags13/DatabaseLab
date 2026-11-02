@@ -6,6 +6,8 @@ import java.util.Map;
 
 import core.domainExceptions.ColumnNotFoundException;
 import core.domainExceptions.DuplicateColumnNameException;
+import core.domainExceptions.NullableKeyException;
+
 public final class TableSchema{
     //Первый столбец всегда pk, поэтому не нужно хранить статус в колонке, нужна упорядоченная map
     //Хранение в hashmap нужно для быстрого поиска столбца по имени, без перебора
@@ -15,7 +17,7 @@ public final class TableSchema{
     public TableSchema(String tableName , ColumnDef[] cols) {
         this.tableName = tableName;
         if(cols[0].nullable()){
-            throw new NullPointerException("Первый столбец может быть null");
+            throw new NullableKeyException("Первый столбец может быть null");
         }
         for (ColumnDef col : cols) {
             if (columnsByName.containsKey(col.name())) {
