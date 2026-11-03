@@ -157,4 +157,47 @@ public class RecordCodec {
         }
 
     }
+
+    //Хранение в файле
+    // 1) Int lenth
+    // 2) tombstone запись удалена
+    // 3) byte[] data
+    public static long write(RandomAccessFile file, TableSchema schema,
+                             Map<String, Object> row, boolean tombstone) throws IOException{
+        byte[] container = encodePayLoad(schema, row);
+        long offset = file.length();
+        file.seek(offset);
+        file.writeInt(container.length);
+        file.writeByte(tombstone ? 1 : 0);
+        file.write(container);
+        return offset;
+    }
+
+    public static Map<String, Object> read(RandomAccessFile file,
+                                           TableSchema schema, long offset) throws IOException{
+        file.seek(offset);
+        int length = file.readInt();
+        int isDeleteByte = file.readByte();
+
+        if((isDeleteByte & 1) != 0){
+            file.skipBytes(length);
+            return null;
+        }
+
+        byte[] container = new byte[length];
+        file.readFully(container); //гарантирует полное заполнение, иначе бросает EOFException
+        return decodePayLoad(schema, container);
+
+    }
+
+    // функция находящая смещение следующей записи, нужная для быстрого обхода файла
+    public static long nextOffset(RandomAccessFile file, long offset)throws IOException {
+        file.seek(offset);
+        int length = file.readInt();
+        return offset + 4 + 1 + length;
+        // прибавляем размер записи к текущему смещению, получаем следующее смещение
+
+    }
+
+
 }
