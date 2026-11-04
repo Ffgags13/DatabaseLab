@@ -16,8 +16,12 @@ public final class TableSchema{
     private final String tableName;
     public TableSchema(String tableName , ColumnDef[] cols) {
         this.tableName = tableName;
+        if (cols == null || cols.length == 0)
+            throw new IllegalArgumentException("Схема не может быть пустой");
+        if (cols[0] == null)
+            throw new IllegalArgumentException("Первая колонка (PK) не задана");
         if(cols[0].nullable()){
-            throw new NullableKeyException("Первый столбец может быть null");
+            throw new NullableKeyException("Первый столбец не может быть nullable(всегда PK)");
         }
         for (ColumnDef col : cols) {
             if (columnsByName.containsKey(col.name())) {
@@ -43,6 +47,13 @@ public final class TableSchema{
 
     public ColumnDef[] getColumns() {
         return columnsByName.values().toArray(new ColumnDef[0]);
+
     }
+
+    public boolean hasColumn(String colName) {
+
+        return columnsByName.containsKey(colName);
+    }
+
 }
 

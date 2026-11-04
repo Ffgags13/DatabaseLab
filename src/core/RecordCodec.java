@@ -158,19 +158,10 @@ public class RecordCodec {
 
     }
 
-    //Хранение в файле
-    // 1) Int lenth
-    // 2) tombstone запись удалена
-    // 3) byte[] data
+
     public static long write(RandomAccessFile file, TableSchema schema,
-                             Map<String, Object> row, boolean tombstone) throws IOException{
-        byte[] container = encodePayLoad(schema, row);
-        long offset = file.length();
-        file.seek(offset);
-        file.writeInt(container.length);
-        file.writeByte(tombstone ? 1 : 0);
-        file.write(container);
-        return offset;
+                             Map<String, Object> row, boolean tombstone) throws IOException {
+        return writeEncoded(file, encodePayLoad(schema, row), tombstone);
     }
 
     public static Map<String, Object> read(RandomAccessFile file,
@@ -198,6 +189,25 @@ public class RecordCodec {
         // прибавляем размер записи к текущему смещению, получаем следующее смещение
 
     }
+
+    public static void markDeleted(RandomAccessFile file, long offset) throws IOException {
+        file.seek(offset + 4);          // пропустить recordLen (int)
+        file.writeByte(1);              // выставить младший бит flags
+    }
+    //Хранение в файле
+    // 1) Int lenth
+    // 2) tombstone запись удалена
+    // 3) byte[] data
+    public static long writeEncoded(RandomAccessFile file, byte[] payload,
+                                    boolean tombstone) throws IOException {
+        long offset = file.length();
+        file.seek(offset);
+        file.writeInt(payload.length);
+        file.writeByte(tombstone ? 1 : 0);
+        file.write(payload);
+        return offset;
+    }
+
 
 
 }
