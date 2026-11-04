@@ -1,48 +1,60 @@
 package core;
 
-//import java.io.Serializable;
-import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
-import core.domainExceptions.ColumnNotFoundException;
-import core.domainExceptions.DuplicateColumnNameException;
-import core.domainExceptions.NullableKeyException;
+/**
+ * Описание таблицы: упорядоченный список колонок + первичный ключ.
+ * <p>
+ * Порядок колонок важен: по нему {@link RecordCodec} пишет поля в payload.
+ * Неизменяемый объект-значение; инварианты проверяются в конструкторе.
+ */
+public final class TableSchema {
 
-public final class TableSchema{
-    //Первый столбец всегда pk, поэтому не нужно хранить статус в колонке, нужна упорядоченная map
-    //Хранение в hashmap нужно для быстрого поиска столбца по имени, без перебора
-    //private final ArrayList<ColumnDef> columns = new ArrayList<>();
-    private final Map<String, ColumnDef> columnsByName = new LinkedHashMap<>();
-    private final String tableName;
-    public TableSchema(String tableName , ColumnDef[] cols) {
-        this.tableName = tableName;
-        if(cols[0].nullable()){
-            throw new NullableKeyException("Первый столбец может быть null");
+    private final List<ColumnDef> columns;
+    private final ColumnDef pkColumn;
+    private final Map<String, ColumnDef> byName;
+
+    /**
+     * @param columns хотя бы одна колонка, имена уникальны, ровно один {@code pk}
+     * @throws IllegalArgumentException если инварианты нарушены
+     */
+    public TableSchema(List<ColumnDef> columns) {
+        if (columns == null || columns.isEmpty()) {
+            throw new IllegalArgumentException("Схема должна содержать хотя бы одну колонку");
         }
-        for (ColumnDef col : cols) {
-            if (columnsByName.containsKey(col.name())) {
-                throw new DuplicateColumnNameException("Имя столбца " + col.name() + " используется дважды. ");
-            }
-            columnsByName.put(col.name(), col);
+        this.columns = List.copyOf(columns);
+
+        this.byName = this.columns.stream()
+                .collect(Collectors.toMap(ColumnDef::name, c -> c, (a, b) -> {
+                    throw new IllegalArgumentException(
+                            "Дублирующееся имя колонки: " + a.name());
+                }));
+
+        List<ColumnDef> pks = this.columns.stream()
+                .filter(ColumnDef::pk)
+                .toList();
+        if (pks.size() != 1) {
+            throw new IllegalArgumentException(
+                    "В схеме должен быть ровно один PK, найдено: " + pks.size());
         }
+        this.pkColumn = pks.get(0);
     }
+
+    /** Упорядоченный (неизменяемый) список колонок. */
+    public List<ColumnDef> getColumns() {
+        return columns;
+    }
+
+    /** Колонка-первичный ключ. Никогда не {@code null}. */
     public ColumnDef pkColumn() {
-        return columnsByName.values().iterator().next();
+        return pkColumn;
     }
 
-    public ColumnDef getColumn(String colName){
-        if (!columnsByName.containsKey(colName)){
-            throw new ColumnNotFoundException("Не найден столбец " + colName);
-        }
-        return(columnsByName.get(colName));
-    }
-
-    public String getTableName() {
-        return tableName;
-    }
-
-    public ColumnDef[] getColumns() {
-        return columnsByName.values().toArray(new ColumnDef[0]);
+    /** Найти колонку по имени; пусто, если нет. */
+    public Optional<ColumnDef> findColumn(String name) {
+        return Optional.ofNullable(byName.get(name));
     }
 }
-
