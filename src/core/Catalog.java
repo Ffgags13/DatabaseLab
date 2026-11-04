@@ -1,9 +1,11 @@
 package core;
 
-import core.domainExceptions.ColumnNotFoundException;
+import index.IndexDefinition;
+import index.IndexKind;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -14,56 +16,31 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Каталог таблиц. Хранит открытые {@link Table} и их {@link TableSchema},
- * сериализует метаданные в простой текстовый файл.
+ * Каталог таблиц: хранит открытые {@link Table}, их схемы и определения индексов;
+ * сериализует метаданные в {@code catalog.txt}.
  * <p>
- * Формат файла (построчный):
+ * Формат:
  * <pre>
  * TABLE cars
  * COLUMN id INT false
  * COLUMN brand STRING false
  * COLUMN price DOUBLE true
- * TABLE users
- * COLUMN ...
+ * INDEX brand HASH false
+ * INDEX price TREE false
  * </pre>
- * <p>
- * Имя файла данных всегда {@code dataDir/<tableName>.dat}. Первый
- * {@code COLUMN} таблицы — первичный ключ.
- * <p>
- * Использование:
- * <pre>
- * try (Catalog catalog = new Catalog(Path.of("db/catalog.txt"), Path.of("db"))) {
- *     if (!catalog.hasTable("cars")) {
- *         catalog.createTable("cars", new ColumnDef[]{
- *             new ColumnDef("id",    ColumnType.INT,    false),
- *             new ColumnDef("brand", ColumnType.STRING, false)
- *         });
- *     }
- *     Table cars = catalog.getTable("cars");
- *     cars.insert(Map.of("id", 1, "brand", "Toyota"));
- * }
- * </pre>
+ * PK-индекс не хранится (создаётся автоматически в {@link Table}).
  */
 public final class Catalog implements AutoCloseable {
 
     private final Path catalogFile;
     private final Path dataDir;
 
-    /** Схемы — для сохранения каталога. Отдельно от Table, чтобы не зависеть от открытых файлов. */
     private final Map<String, TableSchema> schemas = new LinkedHashMap<>();
-
-    /** Открытые таблицы. */
+    private final Map<String, List<IndexDefinition>> indexDefs = new LinkedHashMap<>();
     private final Map<String, Table> tables = new LinkedHashMap<>();
 
     private boolean closed = false;
 
-    /**
-     * Открыть каталог. Если файл каталога существует — загружает таблицы.
-     * Если нет — стартует пустым (создаст при первом {@link #createTable}).
-     *
-     * @param catalogFile путь к файлу каталога (например, {@code db/catalog.txt})
-     * @param dataDir     папка, где лежат {@code .dat}-файлы (например, {@code db})
-     */
     public Catalog(Path catalogFile, Path dataDir) throws IOException {
         this.catalogFile = Objects.requireNonNull(catalogFile, "catalogFile");
         this.dataDir = Objects.requireNonNull(dataDir, "dataDir");
@@ -74,17 +51,14 @@ public final class Catalog implements AutoCloseable {
         }
     }
 
-    // ─────────────────────────── DDL ───────────────────────────
+    // ─────────────────────────── DDL таблиц ───────────────────────────
 
-    /**
-     * Создать новую таблицу и её {@code .dat}-файл.
-     *
-     * @param tableName имя таблицы (также имя файла: {@code <tableName>.dat})
-     * @param columns   колонки, первый — PK
-     * @throws IllegalArgumentException если таблица уже существует
-     * @throws IOException              если не удалось создать файл
-     */
     public Table createTable(String tableName, ColumnDef[] columns) throws IOException {
+        return createTable(tableName, columns, List.of());
+    }
+
+    public Table createTable(String tableName, ColumnDef[] columns,
+                             List<IndexDefinition> extraIndexes) throws IOException {
         checkNotClosed();
         if (hasTable(tableName)) {
             throw new IllegalArgumentException("Таблица уже существует: " + tableName);
@@ -92,18 +66,14 @@ public final class Catalog implements AutoCloseable {
         TableSchema schema = new TableSchema(tableName, columns);
         Path dataFile = dataFileFor(tableName);
 
-        Table table = Table.create(dataFile, schema);
+        Table table = Table.create(dataFile, schema, extraIndexes);
         schemas.put(tableName, schema);
+        indexDefs.put(tableName, new ArrayList<>(extraIndexes));
         tables.put(tableName, table);
         save();
         return table;
     }
 
-    /**
-     * Удалить таблицу: закрыть файл, удалить {@code .dat}, убрать из каталога.
-     *
-     * @throws IllegalArgumentException если таблицы нет
-     */
     public void dropTable(String tableName) throws IOException {
         checkNotClosed();
         Table table = tables.get(tableName);
@@ -113,17 +83,44 @@ public final class Catalog implements AutoCloseable {
         table.close();
         tables.remove(tableName);
         schemas.remove(tableName);
+        indexDefs.remove(tableName);
+
         Files.deleteIfExists(dataFileFor(tableName));
+        // Удаляем все .idx.<column> для этой таблицы (включая PK)
+        try (DirectoryStream<Path> ds =
+                     Files.newDirectoryStream(dataDir, tableName + ".idx.*")) {
+            for (Path p : ds) Files.deleteIfExists(p);
+        }
+        save();
+    }
+
+    // ─────────────────────────── DDL индексов ───────────────────────────
+
+    /** CREATE INDEX: делегирует в {@link Table#createIndex}, обновляет каталог. */
+    public void createIndex(String tableName, String column, IndexKind kind, boolean unique)
+            throws IOException {
+        checkNotClosed();
+        Table table = getTable(tableName);
+        table.createIndex(column, kind, unique);
+        indexDefs.computeIfAbsent(tableName, k -> new ArrayList<>())
+                .add(IndexDefinition.of(column, kind, unique));
+        save();
+    }
+
+    /** DROP INDEX: делегирует в {@link Table#dropIndex}, обновляет каталог. */
+    public void dropIndex(String tableName, String column) throws IOException {
+        checkNotClosed();
+        Table table = getTable(tableName);
+        table.dropIndex(column);
+        List<IndexDefinition> list = indexDefs.get(tableName);
+        if (list != null) {
+            list.removeIf(d -> d.column().equals(column));
+        }
         save();
     }
 
     // ─────────────────────────── Lookup ───────────────────────────
 
-    /**
-     * Получить открытую таблицу по имени.
-     *
-     * @throws IllegalArgumentException если таблицы нет
-     */
     public Table getTable(String tableName) {
         Table table = tables.get(tableName);
         if (table == null) {
@@ -132,17 +129,10 @@ public final class Catalog implements AutoCloseable {
         return table;
     }
 
-    /** Есть ли таблица с таким именем. */
-    public boolean hasTable(String tableName) {
-        return tables.containsKey(tableName);
-    }
+    public boolean hasTable(String tableName) { return tables.containsKey(tableName); }
 
-    /** Имена всех таблиц в порядке добавления. */
-    public List<String> listTableNames() {
-        return new ArrayList<>(tables.keySet());
-    }
+    public List<String> listTableNames() { return new ArrayList<>(tables.keySet()); }
 
-    /** Схема таблицы без получения самой таблицы. */
     public TableSchema getSchema(String tableName) {
         TableSchema schema = schemas.get(tableName);
         if (schema == null) {
@@ -151,45 +141,39 @@ public final class Catalog implements AutoCloseable {
         return schema;
     }
 
+    public List<IndexDefinition> getIndexDefinitions(String tableName) {
+        return List.copyOf(indexDefs.getOrDefault(tableName, List.of()));
+    }
+
     // ─────────────────────────── Lifecycle ───────────────────────────
 
-    /**
-     * Закрыть все открытые таблицы. Идемпотентно.
-     */
     @Override
     public void close() throws IOException {
         if (closed) return;
         closed = true;
-
         IOException firstError = null;
         for (Table table : tables.values()) {
-            try {
-                table.close();
-            } catch (IOException e) {
-                if (firstError == null) firstError = e;
-            }
+            try { table.close(); }
+            catch (IOException e) { if (firstError == null) firstError = e; }
         }
         tables.clear();
-
         if (firstError != null) throw firstError;
     }
 
     // ─────────────────────────── Internals ───────────────────────────
 
-    private Path dataFileFor(String tableName) {
-        return dataDir.resolve(tableName + ".dat");
-    }
+    private Path dataFileFor(String tableName) { return dataDir.resolve(tableName + ".dat"); }
 
     private void checkNotClosed() throws IOException {
         if (closed) throw new IOException("Каталог закрыт: " + catalogFile);
     }
 
-    /** Загрузить каталог: прочитать схемы и открыть все {@code .dat}. */
     private void load() throws IOException {
         List<String> lines = Files.readAllLines(catalogFile, StandardCharsets.UTF_8);
 
-        String currentTable = null;
-        List<ColumnDef> currentColumns = new ArrayList<>();
+        String curTable = null;
+        List<ColumnDef> curCols = new ArrayList<>();
+        List<IndexDefinition> curIdx = new ArrayList<>();
 
         for (String raw : lines) {
             String line = raw.trim();
@@ -198,66 +182,63 @@ public final class Catalog implements AutoCloseable {
             String[] parts = line.split("\\s+");
             switch (parts[0]) {
                 case "TABLE" -> {
-                    if (currentTable != null) {
-                        finishTable(currentTable, currentColumns);
-                    }
-                    if (parts.length < 2) {
-                        throw new IOException("Неверная строка TABLE: " + line);
-                    }
-                    currentTable = parts[1];
-                    currentColumns = new ArrayList<>();
+                    if (curTable != null) finishTable(curTable, curCols, curIdx);
+                    if (parts.length < 2) throw new IOException("Неверно TABLE: " + line);
+                    curTable = parts[1];
+                    curCols = new ArrayList<>();
+                    curIdx = new ArrayList<>();
                 }
                 case "COLUMN" -> {
-                    if (currentTable == null) {
-                        throw new IOException("COLUMN без TABLE: " + line);
-                    }
-                    if (parts.length < 4) {
-                        throw new IOException("Неверная строка COLUMN: " + line);
-                    }
-                    String colName = parts[1];
-                    ColumnType type = ColumnType.valueOf(parts[2]);
-                    boolean nullable = Boolean.parseBoolean(parts[3]);
-                    currentColumns.add(new ColumnDef(colName, type, nullable));
+                    if (curTable == null) throw new IOException("COLUMN без TABLE: " + line);
+                    if (parts.length < 4) throw new IOException("Неверно COLUMN: " + line);
+                    curCols.add(new ColumnDef(parts[1],
+                            ColumnType.valueOf(parts[2]),
+                            Boolean.parseBoolean(parts[3])));
+                }
+                case "INDEX" -> {
+                    if (curTable == null) throw new IOException("INDEX без TABLE: " + line);
+                    if (parts.length < 4) throw new IOException("Неверно INDEX: " + line);
+                    curIdx.add(IndexDefinition.of(parts[1],
+                            IndexKind.valueOf(parts[2]),
+                            Boolean.parseBoolean(parts[3])));
                 }
                 default -> throw new IOException("Неизвестная строка в каталоге: " + line);
             }
         }
-        if (currentTable != null) {
-            finishTable(currentTable, currentColumns);
-        }
+        if (curTable != null) finishTable(curTable, curCols, curIdx);
     }
 
-    private void finishTable(String tableName, List<ColumnDef> columns) throws IOException {
-        if (columns.isEmpty()) {
-            throw new IOException("У таблицы " + tableName + " нет колонок");
-        }
-        TableSchema schema = new TableSchema(tableName, columns.toArray(new ColumnDef[0]));
+    private void finishTable(String tableName, List<ColumnDef> cols, List<IndexDefinition> idx)
+            throws IOException {
+        if (cols.isEmpty()) throw new IOException("У таблицы " + tableName + " нет колонок");
+
+        TableSchema schema = new TableSchema(tableName, cols.toArray(new ColumnDef[0]));
         Path file = dataFileFor(tableName);
         if (!Files.exists(file)) {
-            throw new IOException("Файл таблицы отсутствует: " + file
-                    + " (каталог ссылается на несуществующий .dat)");
+            throw new IOException("Файл таблицы отсутствует: " + file);
         }
-        Table table = Table.open(file, schema);
+        Table table = Table.open(file, schema, idx);
         schemas.put(tableName, schema);
+        indexDefs.put(tableName, new ArrayList<>(idx));
         tables.put(tableName, table);
     }
 
-    /** Сохранить каталог атомарно: {@code catalog.txt.tmp} -> {@code catalog.txt}. */
     private void save() throws IOException {
         StringBuilder sb = new StringBuilder();
-        sb.append("# Каталог таблиц. Формат:\n");
-        sb.append("#   TABLE <имя>\n");
-        sb.append("#   COLUMN <имя> <тип> <nullable>\n");
-        sb.append('\n');
+        sb.append("# Каталог таблиц\n\n");
 
         for (Map.Entry<String, TableSchema> e : schemas.entrySet()) {
-            sb.append("TABLE ").append(e.getKey()).append('\n');
+            String name = e.getKey();
+            sb.append("TABLE ").append(name).append('\n');
             for (ColumnDef col : e.getValue().getColumns()) {
-                sb.append("COLUMN ")
-                        .append(col.name()).append(' ')
+                sb.append("COLUMN ").append(col.name()).append(' ')
                         .append(col.type().name()).append(' ')
-                        .append(col.nullable())
-                        .append('\n');
+                        .append(col.nullable()).append('\n');
+            }
+            for (IndexDefinition d : indexDefs.getOrDefault(name, List.of())) {
+                sb.append("INDEX ").append(d.column()).append(' ')
+                        .append(d.kind().name()).append(' ')
+                        .append(d.unique()).append('\n');
             }
             sb.append('\n');
         }

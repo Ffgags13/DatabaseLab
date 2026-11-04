@@ -1,7 +1,7 @@
 package index;
 
 import core.ColumnType;
-import domainExceptions.DuplicateKeyException;
+import core.domainExceptions.DuplicateKeyException;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;

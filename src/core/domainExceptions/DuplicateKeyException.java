@@ -1,4 +1,4 @@
-package domainExceptions;
+package core.domainExceptions;
 
 /**
  * Нарушено уникальное ограничение: значение уже есть в индексе/PK.

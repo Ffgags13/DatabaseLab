@@ -1,4 +1,4 @@
-package domainExceptions;
+package core.domainExceptions;
 
 /**
  * Данные не соответствуют схеме таблицы.
