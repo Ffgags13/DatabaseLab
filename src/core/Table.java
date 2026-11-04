@@ -41,7 +41,6 @@ public final class Table implements AutoCloseable {
         this.raf = raf;
     }
 
-    // ─────────────────────────── Lifecycle ───────────────────────────
 
     public static Table create(Path dataFile, TableSchema schema) throws IOException {
         Objects.requireNonNull(dataFile, "dataFile");
