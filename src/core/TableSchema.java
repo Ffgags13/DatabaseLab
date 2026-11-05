@@ -1,60 +1,75 @@
 package core;
 
-import java.util.List;
+import domainExceptions.ColumnNotFoundException;
+import domainExceptions.DuplicateColumnNameException;
+import domainExceptions.NullableKeyException;
+
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
 /**
- * Описание таблицы: упорядоченный список колонок + первичный ключ.
+ * Схема таблицы: упорядоченный набор колонок. Первая колонка — первичный ключ.
  * <p>
  * Порядок колонок важен: по нему {@link RecordCodec} пишет поля в payload.
- * Неизменяемый объект-значение; инварианты проверяются в конструкторе.
  */
 public final class TableSchema {
 
-    private final List<ColumnDef> columns;
-    private final ColumnDef pkColumn;
-    private final Map<String, ColumnDef> byName;
+    private final Map<String, ColumnDef> columnsByName = new LinkedHashMap<>();
+    private final String tableName;
 
     /**
-     * @param columns хотя бы одна колонка, имена уникальны, ровно один {@code pk}
-     * @throws IllegalArgumentException если инварианты нарушены
+     * @param tableName имя таблицы
+     * @param cols      колонки; первая — PK (не nullable)
+     * @throws NullableKeyException       если первая колонка nullable
+     * @throws DuplicateColumnNameException если имена колонок повторяются
      */
-    public TableSchema(List<ColumnDef> columns) {
-        if (columns == null || columns.isEmpty()) {
-            throw new IllegalArgumentException("Схема должна содержать хотя бы одну колонку");
-        }
-        this.columns = List.copyOf(columns);
+    public TableSchema(String tableName, ColumnDef[] cols) {
+        if (tableName == null || tableName.isBlank())
+            throw new IllegalArgumentException("Имя таблицы не может быть пустым");
+        if (cols == null || cols.length == 0)
+            throw new IllegalArgumentException("Схема не может быть пустой");
+        if (cols[0] == null)
+            throw new IllegalArgumentException("Первая колонка (PK) не задана");
 
-        this.byName = this.columns.stream()
-                .collect(Collectors.toMap(ColumnDef::name, c -> c, (a, b) -> {
-                    throw new IllegalArgumentException(
-                            "Дублирующееся имя колонки: " + a.name());
-                }));
+        this.tableName = tableName;
+        if (cols[0].nullable())
+            throw new NullableKeyException("PK (первая колонка) не может быть nullable");
 
-        List<ColumnDef> pks = this.columns.stream()
-                .filter(ColumnDef::pk)
-                .toList();
-        if (pks.size() != 1) {
-            throw new IllegalArgumentException(
-                    "В схеме должен быть ровно один PK, найдено: " + pks.size());
+        for (ColumnDef col : cols) {
+            if (columnsByName.containsKey(col.name()))
+                throw new DuplicateColumnNameException(
+                        "Имя столбца " + col.name() + " используется дважды");
+            columnsByName.put(col.name(), col);
         }
-        this.pkColumn = pks.get(0);
     }
 
-    /** Упорядоченный (неизменяемый) список колонок. */
-    public List<ColumnDef> getColumns() {
-        return columns;
-    }
-
-    /** Колонка-первичный ключ. Никогда не {@code null}. */
+    /** PK — первая колонка. */
     public ColumnDef pkColumn() {
-        return pkColumn;
+        return columnsByName.values().iterator().next();
     }
 
-    /** Найти колонку по имени; пусто, если нет. */
-    public Optional<ColumnDef> findColumn(String name) {
-        return Optional.ofNullable(byName.get(name));
+    /**
+     * Найти колонку по имени.
+     *
+     * @throws ColumnNotFoundException если колонки нет
+     */
+    public ColumnDef getColumn(String colName) {
+        ColumnDef c = columnsByName.get(colName);
+        if (c == null)
+            throw new ColumnNotFoundException("Не найден столбец " + colName);
+        return c;
+    }
+
+    public boolean hasColumn(String colName) {
+        return columnsByName.containsKey(colName);
+    }
+
+    public String getTableName() {
+        return tableName;
+    }
+
+    /** Упорядоченный массив колонок (копия). */
+    public ColumnDef[] getColumns() {
+        return columnsByName.values().toArray(new ColumnDef[0]);
     }
 }

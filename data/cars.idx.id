@@ -1,0 +1,8 @@
+# FileDB index v1
+kind=HASH
+column=id
+type=INT
+unique=true
+datSize=68
+"1"	0
+"2"	34

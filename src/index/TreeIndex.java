@@ -1,7 +1,8 @@
 package index;
 
 import core.ColumnType;
-import domainExceptions.DuplicateKeyException;
+import domainExceptions.DuplicateColumnNameException;
+import domainExceptions.NullableKeyException;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -18,8 +19,8 @@ public final class TreeIndex implements Index {
     private final TreeMap<Comparable, List<Long>> map = new TreeMap<>();
 
     public TreeIndex(String column, ColumnType type, boolean unique) {
-        this.column = Objects.requireNonNull(column);
-        this.type = Objects.requireNonNull(type);
+        this.column = Objects.requireNonNull(column, "column");
+        this.type = Objects.requireNonNull(type, "type");
         this.unique = unique;
     }
 
@@ -29,12 +30,21 @@ public final class TreeIndex implements Index {
 
     @Override
     public void add(Object value, long offset) {
-        if (value == null) return;
-        if (!(value instanceof Comparable))
-            throw new IllegalArgumentException("TreeIndex: " + value.getClass() + " не Comparable");
+        // TreeIndex в принципе не индексирует null
+        if (value == null) {
+            throw new NullableKeyException(
+                    "TreeIndex «" + column + "» не допускает null");
+        }
+        if (!(value instanceof Comparable)) {
+            throw new IllegalArgumentException(
+                    "TreeIndex: " + value.getClass().getSimpleName() + " не Comparable");
+        }
         List<Long> list = map.computeIfAbsent((Comparable) value, k -> new ArrayList<>(1));
-        if (unique && !list.isEmpty() && !list.contains(offset))
-            throw new DuplicateKeyException("idx_" + column, column, value);
+        if (unique && !list.isEmpty() && !list.contains(offset)) {
+            throw new DuplicateColumnNameException(
+                    "Дубликат уникального ключа в индексе «" + column
+                            + "»: " + value);
+        }
         list.add(offset);
     }
 
@@ -69,7 +79,7 @@ public final class TreeIndex implements Index {
         return out;
     }
 
-    // ─────── 7.2 persistent ───────
+    // ─────── persistent ───────
 
     @Override
     public void flushToDisk(Path file, long datSize) throws IOException {
