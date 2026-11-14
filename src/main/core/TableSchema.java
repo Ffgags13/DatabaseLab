@@ -1,23 +1,27 @@
-package core;
+package main.core;
 
 //import java.io.Serializable;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import core.domainExceptions.ColumnNotFoundException;
-import core.domainExceptions.DuplicateColumnNameException;
-import core.domainExceptions.NullableKeyException;
+import main.core.domainExceptions.ColumnNotFoundException;
+import main.core.domainExceptions.DuplicateColumnNameException;
+import main.core.domainExceptions.KeyNotUniqueException;
+import main.core.domainExceptions.NullableKeyException;
 
 public final class TableSchema{
     //Первый столбец всегда pk, поэтому не нужно хранить статус в колонке, нужна упорядоченная map
-    //Хранение в hashmap нужно для быстрого поиска столбца по имени, без перебора
-    //private final ArrayList<ColumnDef> columns = new ArrayList<>();
+    //Хранение в hashmap нужно для быстрого поиска столбца по имени
+
     private final Map<String, ColumnDef> columnsByName = new LinkedHashMap<>();
     private final String tableName;
     public TableSchema(String tableName , ColumnDef[] cols) {
         this.tableName = tableName;
         if(cols[0].nullable()){
-            throw new NullableKeyException("Первый столбец может быть null");
+            throw new NullableKeyException("Первый столбец - PK, не может быть nullable");
+        }
+        if(!cols[0].isUniquie()){
+            throw new KeyNotUniqueException("Первый столбец - PK, должен быть Unique");
         }
         for (ColumnDef col : cols) {
             if (columnsByName.containsKey(col.name())) {

@@ -1,4 +1,4 @@
-package core.domainExceptions;
+package main.core.domainExceptions;
 
 public class DuplicateColumnNameException extends RuntimeException {
     public DuplicateColumnNameException(String message) {

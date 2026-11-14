@@ -1,4 +1,4 @@
-package core.domainExceptions;
+package main.core.domainExceptions;
 
 public class NullableKeyException extends RuntimeException {
     public NullableKeyException(String message) {

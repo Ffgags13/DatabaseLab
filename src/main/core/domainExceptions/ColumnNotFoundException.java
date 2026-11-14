@@ -1,4 +1,4 @@
-package core.domainExceptions;
+package main.core.domainExceptions;
 
 public class ColumnNotFoundException extends RuntimeException {
     public ColumnNotFoundException(String message) {
