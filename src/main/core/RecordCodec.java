@@ -5,7 +5,9 @@ import main.core.domainExceptions.*;
 import java.io.*;
 import java.util.LinkedHashMap;
 import java.util.Map;
-
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 public class RecordCodec {
     private static final int DEFAULT_CONTAINER_SIZE = 64;
@@ -135,7 +137,7 @@ public class RecordCodec {
     }
 
 
-    // Проверка новой записи на уникальность полей полным перебором (исправленная версия)
+    // Проверка новой записи на уникальность полным перебором
     public static boolean slowCheckUnique(RandomAccessFile file, TableSchema schema, Map<String, Object> rowToAdd) {
         long currentOffset = 0;
         try {
@@ -145,7 +147,6 @@ public class RecordCodec {
                 Map<String, Object> existingRow = read(file, schema, currentOffset);
                 currentOffset = next;
 
-                // Пропускаем удаленные записи (tombstone == 1)
                 if (existingRow == null) {
                     continue;
                 }
@@ -154,7 +155,6 @@ public class RecordCodec {
                     if (col.isUniquie()) {
                         Object existingVal = existingRow.get(col.name());
                         Object newVal = rowToAdd.get(col.name());
-                        // В SQL два NULL не считаются дубликатами, поэтому проверяем existingVal != null
                         if (existingVal != null && existingVal.equals(newVal)) {
                             throw new NonUniqueValueException(col.name());
                         }
@@ -162,15 +162,15 @@ public class RecordCodec {
                 }
             }
             return true;
-        } catch (IOException e) {
+        }
+        catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
-    // 1. Медленный способ нахождения всех PK по значению произвольного поля
-    public static java.util.List<Object> slowFindPksByColumn(RandomAccessFile file, TableSchema schema,
-                                                             String columnName, Object targetValue) throws IOException {
-        // Проверяем, существует ли вообще такой столбец в схеме
+    // Поиск всех PK по значению произвольного поля
+    public static List<Object> slowFindPksByColumn(RandomAccessFile file, TableSchema schema,
+                                                   String columnName, Object targetValue) throws IOException {
         boolean columnExists = false;
         for (ColumnDef col : schema.getColumns()) {
             if (col.name().equals(columnName)) {
@@ -182,7 +182,7 @@ public class RecordCodec {
             throw new UnknownColumnName(columnName);
         }
 
-        java.util.List<Object> matchingPks = new java.util.ArrayList<>();
+        List<Object> matchingPks = new ArrayList<>();
         String pkColumnName = schema.pkColumn().name();
         long currentOffset = 0;
         long fileLength = file.length();
@@ -192,13 +192,11 @@ public class RecordCodec {
             Map<String, Object> row = read(file, schema, currentOffset);
             currentOffset = next;
 
-            // Пропускаем удаленные записи
             if (row == null) {
                 continue;
             }
 
-            Object cellValue = row.get(columnName);
-            if (java.util.Objects.equals(cellValue, targetValue)) {
+            if (Objects.equals(row.get(columnName), targetValue)) {
                 matchingPks.add(row.get(pkColumnName));
             }
         }
@@ -206,7 +204,7 @@ public class RecordCodec {
         return matchingPks;
     }
 
-    // 2. Медленный способ нахождения offset записи по значению PK (возвращает -1, если не найдено)
+    // Поиск offset записи по значению PK (возвращает -1, если не найдено)
     public static long slowFindOffsetByPk(RandomAccessFile file, TableSchema schema, Object targetPk) throws IOException {
         if (targetPk == null) {
             throw new NullPointerException("Передан null PK для поиска");
@@ -217,19 +215,23 @@ public class RecordCodec {
         long fileLength = file.length();
 
         while (currentOffset < fileLength) {
+            long recordOffset = currentOffset;
             long next = nextOffset(file, currentOffset);
             Map<String, Object> row = read(file, schema, currentOffset);
+            currentOffset = next;
 
-            // Если запись живая и PK совпал — сразу возвращаем смещение до перехода к next
-            if (row != null && java.util.Objects.equals(row.get(pkColumnName), targetPk)) {
-                return currentOffset;
+            if (row == null) {
+                continue;
             }
 
-            currentOffset = next;
+            if (Objects.equals(row.get(pkColumnName), targetPk)) {
+                return recordOffset;
+            }
         }
 
-        return -1L; // Запись не найдена или была удалена
+        return -1;
     }
+
 
     //Очистка мусора в файле
     public static long compact(java.nio.file.Path dataPath) throws IOException {

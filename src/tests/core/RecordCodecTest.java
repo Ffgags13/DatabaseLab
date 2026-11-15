@@ -2,6 +2,7 @@ package tests.core;
 
 import main.core.*;
 import main.core.domainExceptions.NonUniqueValueException;
+import main.core.domainExceptions.NullValueException;
 import main.core.domainExceptions.UnknownColumnName;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,8 +62,8 @@ class RecordCodecTest {
         Map<String, Object> nullNotNullColRow = createRow(1, null, "text");
 
         Assertions.assertAll(
-                () -> Assertions.assertThrows(NullPointerException.class, () -> RecordCodec.encodePayLoad(schema, nullPkRow)),
-                () -> Assertions.assertThrows(IllegalArgumentException.class, () -> RecordCodec.encodePayLoad(schema, nullNotNullColRow))
+                () -> Assertions.assertThrows(NullValueException.class, () -> RecordCodec.encodePayLoad(schema, nullPkRow)),
+                () -> Assertions.assertThrows(NullValueException.class, () -> RecordCodec.encodePayLoad(schema, nullNotNullColRow))
         );
     }
 

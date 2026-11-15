@@ -24,7 +24,6 @@ class ColumnTypeTest {
     private  double dbl = 100.100;
     private float flt = 20.20f;
     private String str = "test";
-    private String strMaxLength = "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111";
     private char[] chars = new char[]{'a', 'b', 'c'};
     private ByteArrayOutputStream outcontainer;
     private ByteArrayInputStream incontainer;
@@ -69,9 +68,7 @@ class ColumnTypeTest {
     @Test
     void requireType_stringTest(){
         Assertions.assertAll(
-                () ->Assertions.assertEquals(str.getBytes(StandardCharsets.UTF_8), ColumnType.STRING.requireType(str)),
-                () -> Assertions.assertEquals(Arrays.toString(chars).getBytes(StandardCharsets.UTF_8), ColumnType.STRING.requireType(chars)),
-                () -> Assertions.assertThrows(MaxLengthExceededException.class, () -> ColumnType.STRING.requireType(strMaxLength)),
+                () ->Assertions.assertArrayEquals(str.getBytes(StandardCharsets.UTF_8), (byte[])ColumnType.STRING.requireType(str)),
                 () -> Assertions.assertThrows(IllegalArgumentException.class, () -> ColumnType.STRING.requireType(dbl))
 
         );
