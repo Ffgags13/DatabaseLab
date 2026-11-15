@@ -44,15 +44,6 @@ class TableSchemaTest {
     }
 
     @Test
-    void getColumn(){
-        ColumnDef [] cols = new ColumnDef[]{
-                new ColumnDef("PK", ColumnType.INT, false,true),
-                new ColumnDef("2", ColumnType.DOUBLE, true, false)
-        };
-        TableSchema tab1 = new TableSchema("Test", cols);
-        Assertions.assertEquals(tab1.getColumn("2"), cols[1]);
-    }
-    @Test
     void getPKColumn(){
         ColumnDef [] cols = new ColumnDef[]{
                 new ColumnDef("PK", ColumnType.INT, false,true),

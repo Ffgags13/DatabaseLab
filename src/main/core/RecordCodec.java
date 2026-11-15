@@ -1,8 +1,6 @@
 package main.core;
 
-import main.core.domainExceptions.MaxLengthExceededException;
-import main.core.domainExceptions.NonUniqueValueException;
-import main.core.domainExceptions.UnknownColumnName;
+import main.core.domainExceptions.*;
 
 import java.io.*;
 import java.util.LinkedHashMap;
@@ -15,7 +13,7 @@ public class RecordCodec {
     public static byte[] encodePayLoad(TableSchema schema, Map<String, Object> row){
        //Проверяем PK
        if(row.get(schema.pkColumn().name()) == null){
-           throw new NullPointerException("Передана строка с null PK");
+           throw new NullValueException(schema.pkColumn().name());
        }
        try {
            ByteArrayOutputStream container = new ByteArrayOutputStream(DEFAULT_CONTAINER_SIZE);
@@ -26,7 +24,7 @@ public class RecordCodec {
                if (item == null) {
                     ++emptyCount;
                     if(!col.nullable()){
-                        throw new IllegalArgumentException("null в не nullable столбце " + col.name());
+                        throw new NullValueException(col.name());
                     }
                     outContainer.writeByte(1);
                     continue;
@@ -36,15 +34,14 @@ public class RecordCodec {
                    col.type().binaryWrite(outContainer, item);
                }
                catch(IllegalArgumentException e){
-                   throw new IllegalArgumentException("В стобце: " + col.name() + " ожидается: "
-                           + col.type() + ", получено: " + e.getMessage());
+                   throw new IncorrectType(col.type().name(), col.name());
                }
                catch(MaxLengthExceededException e){
-                   throw new MaxLengthExceededException("В столбце: "+ col.name() + " превышена максимальная длина String. ");
+                   throw new MaxLengthExceededException(col.name());
                }
 
                if(emptyCount + row.size() > schema.getColumns().length){
-                   throw new UnknownColumnName("Обнаружена запись в столбец несуществующий в схеме: " + schema.getColumns());
+                   throw new UnknownColumnName();
                }
            }
            outContainer.flush();
@@ -159,7 +156,7 @@ public class RecordCodec {
                         Object newVal = rowToAdd.get(col.name());
                         // В SQL два NULL не считаются дубликатами, поэтому проверяем existingVal != null
                         if (existingVal != null && existingVal.equals(newVal)) {
-                            return false;
+                            throw new NonUniqueValueException(col.name());
                         }
                     }
                 }
@@ -182,7 +179,7 @@ public class RecordCodec {
             }
         }
         if (!columnExists) {
-            throw new UnknownColumnName("Столбец " + columnName + " не найден в схеме таблицы");
+            throw new UnknownColumnName(columnName);
         }
 
         java.util.List<Object> matchingPks = new java.util.ArrayList<>();

@@ -1,31 +1,33 @@
 package main.core;
 
 //import java.io.Serializable;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
-import main.core.domainExceptions.ColumnNotFoundException;
-import main.core.domainExceptions.DuplicateColumnNameException;
-import main.core.domainExceptions.KeyNotUniqueException;
-import main.core.domainExceptions.NullableKeyException;
+import main.core.domainExceptions.*;
 
 public final class TableSchema{
     //Первый столбец всегда pk, поэтому не нужно хранить статус в колонке, нужна упорядоченная map
     //Хранение в hashmap нужно для быстрого поиска столбца по имени
-
+    private Set<String> indexedColumns = new HashSet<>();
     private final Map<String, ColumnDef> columnsByName = new LinkedHashMap<>();
     private final String tableName;
     public TableSchema(String tableName , ColumnDef[] cols) {
+        if(cols == null || cols.length == 0){
+            throw new IllegalArgumentException();
+        }
         this.tableName = tableName;
         if(cols[0].nullable()){
-            throw new NullableKeyException("Первый столбец - PK, не может быть nullable");
+            throw new NullableKeyException();
         }
         if(!cols[0].isUniquie()){
-            throw new KeyNotUniqueException("Первый столбец - PK, должен быть Unique");
+            throw new KeyNotUniqueException();
         }
         for (ColumnDef col : cols) {
             if (columnsByName.containsKey(col.name())) {
-                throw new DuplicateColumnNameException("Имя столбца " + col.name() + " используется дважды. ");
+                throw new DuplicateColumnNameException(col.name());
             }
             columnsByName.put(col.name(), col);
         }
@@ -36,7 +38,7 @@ public final class TableSchema{
 
     public ColumnDef getColumn(String colName){
         if (!columnsByName.containsKey(colName)){
-            throw new ColumnNotFoundException("Не найден столбец " + colName);
+            throw new UnknownColumnName(colName);
         }
         return(columnsByName.get(colName));
     }
@@ -122,6 +124,14 @@ public final class TableSchema{
 
         return sb.toString().trim();
     }
-
+    public Set<String> getIndexedColumns() {
+        if (indexedColumns == null) {
+            indexedColumns = new HashSet<>();
+        }
+        return indexedColumns;
+    }
+    public void addIndexedColumn(String colName) {
+        getIndexedColumns().add(colName);
+    }
 }
 

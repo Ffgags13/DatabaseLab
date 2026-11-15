@@ -1,7 +1,7 @@
 package main.core.domainExceptions;
 
-public class NullValueException extends RuntimeException {
-    public NullValueException(String message) {
-        super(message);
+public class NullValueException extends DatabaseException {
+    public NullValueException(String colName) {
+        super("Попытка записи null в обязательный (NOT NULL) столбец '" + colName + "'");
     }
 }

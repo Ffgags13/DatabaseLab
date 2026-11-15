@@ -1,8 +1,7 @@
 package main.core.domainExceptions;
 
-public class MaxLengthExceededException extends RuntimeException {
-
-    public MaxLengthExceededException(String message) {
-        super(message);
+public class MaxLengthExceededException extends DatabaseException {
+    public MaxLengthExceededException(String colName) {
+        super("Превышена максимальная длина строки в столбце '" + colName + "'");
     }
 }

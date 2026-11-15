@@ -1,7 +1,7 @@
 package main.core.domainExceptions;
 
-public class DuplicateColumnNameException extends RuntimeException {
-    public DuplicateColumnNameException(String message) {
-        super(message);
+public class DuplicateColumnNameException extends DatabaseException {
+    public DuplicateColumnNameException(String colName) {
+        super("Имя столбца '" + colName + "' используется в схеме дважды");
     }
 }

@@ -1,7 +1,7 @@
 package main.core.domainExceptions;
 
-public class KeyNotUniqueException extends RuntimeException {
-    public KeyNotUniqueException(String message) {
-        super(message);
+public class KeyNotUniqueException extends DatabaseException {
+    public KeyNotUniqueException() {
+        super("Первичный ключ (первый столбец) должен быть unique");
     }
 }

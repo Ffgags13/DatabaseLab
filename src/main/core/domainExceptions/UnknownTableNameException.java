@@ -1,7 +1,7 @@
 package main.core.domainExceptions;
 
-public class UnknownTableNameException extends RuntimeException {
-    public UnknownTableNameException(String message) {
-        super(message);
+public class UnknownTableNameException extends DatabaseException {
+    public UnknownTableNameException(String tableName) {
+        super("Таблица с именем '" + tableName + "' не найдена");
     }
 }
