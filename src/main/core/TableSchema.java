@@ -1,10 +1,7 @@
 package main.core;
 
 //import java.io.Serializable;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import main.core.domainExceptions.*;
 
@@ -14,6 +11,8 @@ public final class TableSchema{
     private Set<String> indexedColumns = new HashSet<>();
     private final Map<String, ColumnDef> columnsByName = new LinkedHashMap<>();
     private final String tableName;
+    private Map<String, Link> foreignKeys = new HashMap<>();
+
     public TableSchema(String tableName , ColumnDef[] cols) {
         if(cols == null || cols.length == 0){
             throw new IllegalArgumentException();
@@ -132,6 +131,16 @@ public final class TableSchema{
     }
     public void addIndexedColumn(String colName) {
         getIndexedColumns().add(colName);
+    }
+    public Map<String, Link> getForeignKeys() {
+        if (foreignKeys == null) {
+            foreignKeys = new HashMap<>();
+        }
+        return foreignKeys;
+    }
+
+    public void setForeignKeys(Map<String, Link> foreignKeys) {
+        this.foreignKeys = (foreignKeys != null) ? new HashMap<>(foreignKeys) : new HashMap<>();
     }
 }
 
