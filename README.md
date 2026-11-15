@@ -77,7 +77,7 @@ getSchema(string TableName) -> TableSchema schema
                   ПРИМЕР:
                   WHERE price > 20000 and name == "abc"
                   string[]{price, name}
-                  vals -> row.gt(vals[0], 2000) &&  row.eq(vals[1], "abc")
+                  row -> row.gt(0, 2000) &&  row.eq(1, "abc")
 
 
 Update 
