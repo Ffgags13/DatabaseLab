@@ -48,5 +48,80 @@ public final class TableSchema{
     public ColumnDef[] getColumns() {
         return columnsByName.values().toArray(new ColumnDef[0]);
     }
+
+    public String showSchema() {
+        ColumnDef[] cols = getColumns();
+        ColumnDef pk = pkColumn();
+
+        // 1. Вычисляем ширину столбцов с учетом заголовков и данных
+        int fieldWidth = "Field".length();
+        int typeWidth = "Type".length();
+        int nullWidth = "Null".length();
+        int keyWidth = "Key".length();
+
+        for (ColumnDef col : cols) {
+            fieldWidth = Math.max(fieldWidth, col.name().length());
+            typeWidth = Math.max(typeWidth, col.type().name().length());
+            // Null: "YES" или "NO" (максимум 3 символа)
+            // Key: "PRI", "UNI" или "" (максимум 3 символа)
+        }
+
+        // 2. Собираем разделительную линию вида +-------+------+------+-----+
+        String separator = "+" + "-".repeat(fieldWidth + 2)
+                + "+" + "-".repeat(typeWidth + 2)
+                + "+" + "-".repeat(nullWidth + 2)
+                + "+" + "-".repeat(keyWidth + 2) + "+\n";
+
+        // Шаблон строки с выравниванием по левому краю
+        String rowFormat = "| %-" + fieldWidth + "s | %-" + typeWidth + "s | %-" + nullWidth + "s | %-" + keyWidth + "s |\n";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(separator);
+        sb.append(String.format(rowFormat, "Field", "Type", "Null", "Key"));
+        sb.append(separator);
+
+        // 3. Заполняем строки таблицы
+        for (ColumnDef col : cols) {
+            String nullStr = col.nullable() ? "YES" : "NO";
+            String keyStr = "";
+            if (col.equals(pk)) {
+                keyStr = "PRI";
+            } else if (col.isUniquie()) {
+                keyStr = "UNI";
+            }
+
+            sb.append(String.format(rowFormat, col.name(), col.type().name(), nullStr, keyStr));
+        }
+
+        sb.append(separator);
+        return sb.toString();
+    }
+    public String showShortSchema() {
+        ColumnDef[] cols = getColumns();
+        ColumnDef pk = pkColumn();
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("Table: ").append(tableName).append("\n");
+        sb.append("| ");
+
+        for (ColumnDef col : cols) {
+            sb.append(col.name()).append(" (").append(col.type().name());
+
+            if (col.equals(pk)) {
+                sb.append(", PRI");
+            } else if (col.isUniquie()) {
+                sb.append(", UNI");
+            }
+
+            if (!col.nullable() && !col.equals(pk)) {
+                sb.append(", NOT NULL");
+            }
+
+            sb.append(") | ");
+        }
+
+        return sb.toString().trim();
+    }
+
 }
 

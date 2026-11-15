@@ -45,6 +45,9 @@ public enum ColumnType {
                 throw new IllegalStateException("Неожиданная ошибка при чтении из памяти", e);
             }
         }
+        protected int compareValues(Object a, Object b) {
+            return Integer.compare(requireType(a), requireType(b));
+        }
     },
     BOOLEAN{
         public Boolean requireType(Object item){
@@ -70,6 +73,10 @@ public enum ColumnType {
             catch (IOException e) {
                 throw new IllegalStateException("Неожиданная ошибка при чтении из памяти", e);
             }
+        }
+
+        protected int compareValues(Object a, Object b) {
+            return Boolean.compare(requireType(a), requireType(b));
         }
     },
     DOUBLE{
@@ -98,6 +105,9 @@ public enum ColumnType {
             catch (IOException e) {
                 throw new IllegalStateException("Неожиданная ошибка при чтении из памяти", e);
             }
+        }
+        protected int compareValues(Object a, Object b) {
+            return Double.compare(requireType(a), requireType(b));
         }
     },
     //Обработать MaxLengthExceededException в клиенте
@@ -138,6 +148,13 @@ public enum ColumnType {
                 throw new IllegalStateException("Неожиданная ошибка при чтении из памяти", e);
             }
         }
+
+        protected int compareValues(Object a, Object b) {
+            if (!(a instanceof CharSequence) || !(b instanceof CharSequence)) {
+                throw new IllegalArgumentException("Ожидались строки для сравнения");
+            }
+            return a.toString().compareTo(b.toString());
+        }
     },
     DATEDAYS {
         public Long requireType(Object item){
@@ -169,6 +186,11 @@ public enum ColumnType {
                 throw new IllegalStateException("Неожиданная ошибка при чтении из памяти", e);
             }
         }
+
+        @Override
+        protected int compareValues(Object a, Object b) {
+            return Long.compare(requireType(a), requireType(b));
+        }
     };
     //Метод проверяет и приводит типы если возможно к виду удобному для сериализации
     public abstract Object requireType(Object item);
@@ -179,4 +201,30 @@ public enum ColumnType {
 
     //Метод читает объект из бинарного потока
     public abstract Object binaryRead(DataInputStream inStream);
+
+    //сравнение объектов
+    protected abstract int compareValues(Object a, Object b);
+
+    public boolean eq(Object a, Object b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return compareValues(a, b) == 0;
+    }
+
+    // Проверка "строго больше" (a > b)
+    public boolean gt(Object a, Object b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return compareValues(a, b) > 0;
+    }
+
+    // Проверка "строго меньше" (a < b)
+    public boolean lt(Object a, Object b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return compareValues(a, b) < 0;
+    }
 }
