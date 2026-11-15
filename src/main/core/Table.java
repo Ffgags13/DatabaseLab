@@ -1,615 +1,624 @@
 package main.core;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import main.core.domainExceptions.*;
+import main.domainExceptions.ColumnNotFoundException;
+import main.domainExceptions.DuplicateKeyException;
+import main.domainExceptions.NullableKeyException;
+import main.index.HashIndex;
+import main.index.Index;
+import main.index.IndexDefinition;
+import main.index.IndexKind;
+import main.index.IndexPersistence;
+import main.index.TreeIndex;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.function.Predicate;
+
 /**
- * Представляет отдельную таблицу базы данных, управляющую хранением записей на диске
- * и индексами в оперативной памяти.
+ * Фасад над файлом {@code .dat} с поддержкой индексов.
  * <p>
- * Схема таблицы сохраняется в JSON-файле ({@code .schema.json}), а бинарные записи —
- * в файле данных ({@code .dat}). Для быстрого поиска поддерживаются первичный индекс
- * ({@code PK -> offset}) и вторичные индексы ({@code значение -> множество PK}).
+ * <b>Что ускоряется:</b> проверка уникальности при {@code insert}/{@code update}
+ * (O(1) вместо O(N)); {@code select(Condition)}/{@code delete(Condition)}/{@code update(Condition, …)}
+ * при условии по индексированной колонке — через {@link #resolveOffsets}.
+ * <p>
+ * <b>Что не ускоряется:</b> {@code selectAll()}, {@code delete(Predicate)}, {@code update(Predicate, …)}
+ * (Predicate непрозрачен — только скан), запросы по неиндексированной колонке.
+ * <p>
+ * PK-индекс (уникальный {@code HashIndex}) создаётся автоматически при
+ * {@link #create}/{@link #open}.
  */
-public class Table {
-    private final Path dataPath;
-    private final Path schemaPath;
+public final class Table implements AutoCloseable {
+
+    private static final int HEADER_SIZE = 4 + 1;         // recordLen + flags
+    private static final int FLAG_TOMBSTONE = 1;
+    private static final double COMPACTION_THRESHOLD = 0.3;
+
+    private final Path dataFile;
     private final TableSchema schema;
+    private RandomAccessFile raf;
+    private boolean closed = false;
 
-    private final Map<Object, Long> primaryIndex = new HashMap<>();
-    private final Map<String, Map<Object, Set<Object>>> secondaryIndexes = new HashMap<>();
+    private final List<Index> indexes = new ArrayList<>();
+    private final Map<String, Index> indexesByColumn = new HashMap<>();
 
-    public static final String SCHEMA_SUFFIX = ".schema.json";
-    public static final String DATA_SUFFIX = ".dat";
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-
-    private static final int MIN_RECORDS_FOR_COMPACT = 100;
-    private static final double TOMBSTONE_RATIO_THRESHOLD = 0.3;
-    private long totalRecords = 0;
-    private long tombstoneCount = 0;
-    /**
-     * Создаёт новую таблицу в указанной директории, сохраняет её схему на диск
-     * и инициализирует пустой файл данных.
-     *
-     * @param dbDirectory директория базы данных
-     * @param schema      схема создаваемой таблицы
-     * @throws IOException при ошибке создания директории или файлов таблицы
-     */
-    public Table(Path dbDirectory, TableSchema schema) throws IOException {
-        Files.createDirectories(dbDirectory);
-        String tableName = schema.getTableName();
-        this.dataPath = dbDirectory.resolve(tableName + DATA_SUFFIX);
-        this.schemaPath = dbDirectory.resolve(tableName + SCHEMA_SUFFIX);
+    private Table(Path dataFile, TableSchema schema, RandomAccessFile raf) {
+        this.dataFile = dataFile;
         this.schema = schema;
-
-        for (String indexedCol : schema.getIndexedColumns()) {
-            secondaryIndexes.put(indexedCol, new HashMap<>());
-        }
-
-        saveSchemaToDisk();
-        if (Files.notExists(this.dataPath)) {
-            Files.createFile(this.dataPath);
-        }
-    }
-    /**
-     * Загружает существующую таблицу с диска по её имени и восстанавливает индексы в памяти.
-     *
-     * @param dbDirectory директория базы данных
-     * @param tableName   имя загружаемой таблицы
-     * @throws IOException           при ошибке чтения схемы или файла данных
-     * @throws IllegalStateException если файл схемы или данных таблицы отсутствует на диске
-     */
-    public Table(Path dbDirectory, String tableName) throws IOException {
-        this.dataPath = dbDirectory.resolve(tableName + DATA_SUFFIX);
-        this.schemaPath = dbDirectory.resolve(tableName + SCHEMA_SUFFIX);
-
-        if (Files.notExists(this.schemaPath) || Files.notExists(this.dataPath)) {
-            throw new IllegalStateException("Файлы таблицы '" + tableName + "' не найдены в " + dbDirectory);
-        }
-
-        this.schema = loadSchemaFromDisk();
-        loadTableState();
-    }
-    private void saveSchemaToDisk() throws IOException {
-        Path tempPath = schemaPath.resolveSibling(schemaPath.getFileName() + ".tmp");
-        String json = GSON.toJson(schema);
-        Files.writeString(tempPath, json);
-        Files.move(tempPath, schemaPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        this.raf = raf;
     }
 
-    private TableSchema loadSchemaFromDisk() throws IOException {
-        String json = Files.readString(schemaPath);
-        return GSON.fromJson(json, TableSchema.class);
+    // ─────────────────────────── Lifecycle ───────────────────────────
+
+    public static Table create(Path dataFile, TableSchema schema) throws IOException {
+        return create(dataFile, schema, List.of());
     }
 
-    private void loadTableState() throws IOException {
-        primaryIndex.clear();
-        secondaryIndexes.clear();
-        for (String indexedCol : schema.getIndexedColumns()) {
-            secondaryIndexes.put(indexedCol, new HashMap<>());
+    public static Table create(Path dataFile, TableSchema schema,
+                               List<IndexDefinition> extraIndexes) throws IOException {
+        Objects.requireNonNull(dataFile);
+        Objects.requireNonNull(schema);
+
+        Path parent = dataFile.toAbsolutePath().getParent();
+        if (parent != null) Files.createDirectories(parent);
+        if (Files.exists(dataFile)) throw new IOException("Файл уже существует: " + dataFile);
+
+        RandomAccessFile raf = new RandomAccessFile(dataFile.toFile(), "rw");
+        Table t = new Table(dataFile, schema, raf);
+
+        // PK-индекс обязателен
+        t.addIndex(IndexDefinition.forPrimaryKey(schema), false);
+        for (IndexDefinition def : extraIndexes) {
+            if (def.column().equals(schema.pkColumn().name())) continue;
+            t.addIndex(def, false);
+        }
+        t.flushAllIndexes();   // ← ДОБАВИТЬ: создать .idx-файлы сразу
+        return t;
+    }
+
+    public static Table open(Path dataFile, TableSchema schema) throws IOException {
+        return open(dataFile, schema, List.of());
+    }
+
+    public static Table open(Path dataFile, TableSchema schema,
+                             List<IndexDefinition> indexDefs) throws IOException {
+        Objects.requireNonNull(dataFile);
+        Objects.requireNonNull(schema);
+        Objects.requireNonNull(indexDefs);
+
+        if (!Files.exists(dataFile)) throw new IOException("Файл не найден: " + dataFile);
+        if (!Files.isRegularFile(dataFile)) throw new IOException("Не обычный файл: " + dataFile);
+
+        RandomAccessFile raf = new RandomAccessFile(dataFile.toFile(), "rw");
+        Table t = new Table(dataFile, schema, raf);
+
+        t.addIndex(IndexDefinition.forPrimaryKey(schema), true);
+        for (IndexDefinition def : indexDefs) {
+            if (def.column().equals(schema.pkColumn().name())) continue;
+            t.addIndex(def, true);
+        }
+        return t;
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (closed) return;
+        flushAllIndexes();       // сначала сбросить индексы (нужен raf.length())
+        closed = true;
+        raf.close();
+    }
+
+    // ─────────────────────────── Index DDL ───────────────────────────
+
+    /** CREATE INDEX. Идемпотентно (если индекс уже есть — исключение). */
+    public void createIndex(String column, IndexKind kind, boolean unique) throws IOException {
+        checkNotClosed();
+        if (indexesByColumn.containsKey(column)) {
+            throw new IllegalArgumentException("Индекс на колонке уже существует: " + column);
+        }
+        ColumnDef col;
+        try { col = schema.getColumn(column); }
+        catch (ColumnNotFoundException e) {
+            throw new IllegalArgumentException("Колонка не найдена: " + column);
         }
 
-        long total = 0;
-        long deleted = 0;
-        String pkColName = schema.pkColumn().name();
+        Index ix = newIndex(column, col.type(), kind, unique);
+        rebuildSingle(ix);
+        indexes.add(ix);
+        indexesByColumn.put(column, ix);
+        ix.flushToDisk(indexPath(column), raf.length());
+    }
 
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "r")) {
-            long currentOffset = 0;
-            long fileLength = raf.length();
+    /** DROP INDEX. PK-индекс удалить нельзя. */
+    public void dropIndex(String column) throws IOException {
+        checkNotClosed();
+        if (column.equals(schema.pkColumn().name())) {
+            throw new IllegalArgumentException("Нельзя удалить индекс PK: " + column);
+        }
+        Index ix = indexesByColumn.remove(column);
+        if (ix == null) throw new IllegalArgumentException("Индекса нет: " + column);
+        indexes.remove(ix);
+        Files.deleteIfExists(indexPath(column));
+    }
 
-            while (currentOffset < fileLength) {
-                long next = RecordCodec.nextOffset(raf, currentOffset);
-                Map<String, Object> row = RecordCodec.read(raf, schema, currentOffset);
+    public boolean hasIndexOn(String column) { return indexesByColumn.containsKey(column); }
 
-                total++;
-                if (row == null) {
-                    deleted++;
-                } else {
-                    Object pkValue = row.get(pkColName);
-                    primaryIndex.put(pkValue, currentOffset);
-                    addToSecondaryIndexes(row, pkValue);
-                }
-                currentOffset = next;
+    public Index findIndexOn(String column) { return indexesByColumn.get(column); }
+
+    public List<Index> getIndexes() { return List.copyOf(indexes); }
+
+    // ─────────────────────────── DML (Predicate — скан) ───────────────────────────
+
+    public long insert(Map<String, Object> row) throws IOException {
+        Objects.requireNonNull(row);
+        checkNotClosed();
+
+        // 1. Опечатки в именах колонок
+        for (String name : row.keySet()) {
+            try { schema.getColumn(name); }
+            catch (ColumnNotFoundException e) {
+                throw new IllegalArgumentException("Неизвестная колонка: " + name);
             }
         }
-        this.totalRecords = total;
-        this.tombstoneCount = deleted;
-    }
-    /**
-     * Строит вторичный индекс по указанному столбцу, сканируя существующие записи таблицы,
-     * и сохраняет обновлённый список индексов в файл схемы.
-     *
-     * @param colName имя индексируемого столбца
-     * @throws IOException                при ошибке чтения данных или записи схемы
-     * @throws UnknownColumnName          если столбец отсутствует в схеме таблицы
-     * @throws IndexAlreadyExistsException если столбец является PK или индекс по нему уже существует
-     */
-    public void createIndex(String colName) throws IOException {
-        ColumnDef colDef = findColumnDef(colName);
-        if (colDef.equals(schema.pkColumn()) || secondaryIndexes.containsKey(colName)) {
-            throw new IndexAlreadyExistsException(colName);
+
+        // 2. PK не null
+        String pkName = schema.pkColumn().name();
+        if (row.get(pkName) == null) {
+            throw new NullableKeyException("PK «" + pkName + "» не задан");
         }
 
-        Map<Object, Set<Object>> indexMap = new HashMap<>();
-        String pkColName = schema.pkColumn().name();
-
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "r")) {
-            long currentOffset = 0;
-            long fileLength = raf.length();
-
-            while (currentOffset < fileLength) {
-                long next = RecordCodec.nextOffset(raf, currentOffset);
-                Map<String, Object> row = RecordCodec.read(raf, schema, currentOffset);
-                currentOffset = next;
-
-                if (row == null) continue;
-
-                Object fieldVal = row.get(colName);
-                Object pkVal = row.get(pkColName);
-                if (fieldVal != null) {
-                    indexMap.computeIfAbsent(fieldVal, k -> new HashSet<>()).add(pkVal);
-                }
+        // 3. Уникальность через все unique-индексы (включая PK)
+        for (Index ix : indexes) {
+            if (!ix.isUnique()) continue;
+            Object v = row.get(ix.column());
+            if (v == null) continue;
+            if (!ix.lookupEq(v).isEmpty()) {
+                throw new DuplicateKeyException("idx_" + ix.column(), ix.column(), v);
             }
         }
 
-        secondaryIndexes.put(colName, indexMap);
-        schema.addIndexedColumn(colName);
-        saveSchemaToDisk();
+        // 4. Запись + индексы
+        long off = RecordCodec.write(raf, schema, row, false);
+        for (Index ix : indexes) {
+            ix.add(row.get(ix.column()), off);
+        }
+        return off;
     }
 
-    public String getShortSchema() { return schema.showShortSchema(); }
-    public String getFullSchema() { return schema.showSchema(); }
-    public TableSchema getSchema() { return schema; }
-    /**
-     * Вставляет новую строку, переданную в виде массива значений в порядке столбцов схемы.
-     *
-     * @param values массив значений полей
-     * @throws IOException              при ошибке записи на диск
-     * @throws IllegalArgumentException если передан {@code null}
-     * @throws AmountValuesException    если длина массива не совпадает с числом столбцов схемы
-     */
-    public void insert(Object[] values) throws IOException {
-        if (values == null) {
-            throw new IllegalArgumentException("Передан null вместо массива значений");
-        }
-        ColumnDef[] columns = schema.getColumns();
-        if (values.length != columns.length) {
-            throw new AmountValuesException(columns.length);
-        }
-
-        Map<String, Object> row = new LinkedHashMap<>(columns.length);
-        for (int i = 0; i < columns.length; i++) {
-            row.put(columns[i].name(), values[i]);
-        }
-        insert(row);
-    }
-    /**
-     * Вставляет новую строку в таблицу, записывая её на диск и обновляя индексы.
-     *
-     * @param row словарь значений в формате {@code имя_столбца -> значение}
-     * @throws IOException              при ошибке записи на диск
-     * @throws IllegalArgumentException если передан {@code null}
-     * @throws NullValueException       если значение первичного ключа равно {@code null}
-     * @throws NonUniqueValueException  если запись с таким первичным ключом уже существует
-     */
-    public void insert(Map<String, Object> row) throws IOException {
-        if (row == null) {
-            throw new IllegalArgumentException("Передан null вместо словаря значений");
-        }
-        validateColumnsExist(row.keySet().toArray(new String[0]));
-
-        String pkColName = schema.pkColumn().name();
-        Object pkValue = row.get(pkColName);
-        if (pkValue == null) {
-            throw new NullValueException(pkColName);
-        }
-        if (primaryIndex.containsKey(pkValue)) {
-            throw new NonUniqueValueException(pkColName);
-        }
-
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "rw")) {
-            long offset = RecordCodec.write(raf, schema, row, false);
-            primaryIndex.put(pkValue, offset);
-            addToSecondaryIndexes(row, pkValue);
-            totalRecords++;
-        }
-    }
-    /**
-     * Выполняет прямой поиск записи по значению первичного ключа с использованием первичного индекса.
-     *
-     * @param pkValue значение первичного ключа
-     * @return словарь значений найденной строки или {@code null}, если запись не найдена
-     * @throws IOException              при ошибке чтения файла данных
-     * @throws IllegalArgumentException если {@code pkValue} равен {@code null}
-     */
-    public Map<String, Object> selectByPk(Object pkValue) throws IOException {
-        if (pkValue == null) {
-            throw new IllegalArgumentException("PK не может быть null");
-        }
-        Long offset = primaryIndex.get(pkValue);
-        if (offset == null) {
-            return null;
-        }
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "r")) {
-            return RecordCodec.read(raf, schema, offset);
-        }
-    }
-    /**
-     * Считывает все активные (неудалённые) строки таблицы в виде списка массивов значений.
-     *
-     * @return список массивов значений строк в порядке их хранения в файле
-     * @throws IOException при ошибке чтения файла данных
-     */
-    public List<Object[]> getAllRows() throws IOException {
-        ColumnDef[] cols = schema.getColumns();
-        List<Object[]> rows = new ArrayList<>();
-
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "r")) {
-            long currentOffset = 0;
-            long fileLength = raf.length();
-
-            while (currentOffset < fileLength) {
-                long next = RecordCodec.nextOffset(raf, currentOffset);
-                Map<String, Object> rowMap = RecordCodec.read(raf, schema, currentOffset);
-                currentOffset = next;
-
-                if (rowMap == null) continue;
-
-                Object[] rowValues = new Object[cols.length];
-                for (int i = 0; i < cols.length; i++) {
-                    rowValues[i] = rowMap.get(cols[i].name());
-                }
-                rows.add(rowValues);
+    public int delete(Predicate<Map<String, Object>> where) throws IOException {
+        Objects.requireNonNull(where);
+        checkNotClosed();
+        int n = 0;
+        for (long off : scanAllOffsets()) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null && where.test(row)) {
+                deleteAt(off, row);
+                n++;
             }
         }
-        return rows;
-    }
-    /**
-     * Выполняет выборку значений указанных столбцов для записей, удовлетворяющих предикату.
-     * <p>
-     * Если условие задано по одному столбцу, для которого существует первичный или вторичный
-     * индекс, поиск автоматически выполняется по индексу без полного сканирования файла.
-     *
-     * @param findingCols   массив имён столбцов, значения которых должны попасть в результат
-     * @param conditionCols массив имён столбцов, передаваемых в {@link RowView} для проверки условия
-     * @param condition     условие отбора строк (если {@code null}, выбираются все активные записи)
-     * @return словарь в формате {@code имя_столбца -> массив_значений}
-     * @throws IOException       при ошибке чтения файла данных
-     * @throws UnknownColumnName если хотя бы один из указанных столбцов отсутствует в схеме
-     */
-    public Map<String, Object[]> selectItems(String[] findingCols,
-                                             String[] conditionCols,
-                                             Predicate<RowView> condition) throws IOException {
-        validateColumnsExist(findingCols);
-        if (conditionCols != null) {
-            validateColumnsExist(conditionCols);
-        }
-
-        Map<String, List<Object>> tempColumns = new LinkedHashMap<>();
-        for (String colName : findingCols) {
-            tempColumns.put(colName, new ArrayList<>());
-        }
-
-        String[] safeCondCols = (conditionCols != null) ? conditionCols : new String[0];
-        ColumnType[] condTypes = resolveConditionTypes(safeCondCols);
-
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "r")) {
-            if (condition != null && safeCondCols.length == 1) {
-                String targetCol = safeCondCols[0];
-                if (targetCol.equals(schema.pkColumn().name())) {
-                    selectViaPrimaryIndex(raf, findingCols, targetCol, condTypes, condition, tempColumns);
-                    return buildResultMap(tempColumns);
-                } else if (secondaryIndexes.containsKey(targetCol)) {
-                    selectViaSecondaryIndex(raf, findingCols, targetCol, condTypes, condition, tempColumns);
-                    return buildResultMap(tempColumns);
-                }
-            }
-
-            long currentOffset = 0;
-            long fileLength = raf.length();
-
-            while (currentOffset < fileLength) {
-                long next = RecordCodec.nextOffset(raf, currentOffset);
-                Map<String, Object> row = RecordCodec.read(raf, schema, currentOffset);
-                currentOffset = next;
-
-                if (row == null) continue;
-
-                Object[] conditionArgs = extractConditionArgs(row, safeCondCols);
-                RowView view = new RowView(conditionArgs, condTypes, safeCondCols);
-
-                if (condition == null || condition.test(view)) {
-                    for (String findCol : findingCols) {
-                        tempColumns.get(findCol).add(row.get(findCol));
-                    }
-                }
-            }
-        }
-        return buildResultMap(tempColumns);
+        return n;
     }
 
-    private void selectViaPrimaryIndex(RandomAccessFile raf, String[] findingCols, String pkColName,
-                                       ColumnType[] condTypes, Predicate<RowView> condition,
-                                       Map<String, List<Object>> tempColumns) throws IOException {
-        String[] colNames = new String[]{pkColName};
-        for (Map.Entry<Object, Long> entry : primaryIndex.entrySet()) {
-            RowView view = new RowView(new Object[]{entry.getKey()}, condTypes, colNames);
-            if (condition.test(view)) {
-                Map<String, Object> row = RecordCodec.read(raf, schema, entry.getValue());
-                if (row != null) {
-                    for (String findCol : findingCols) {
-                        tempColumns.get(findCol).add(row.get(findCol));
-                    }
-                }
-            }
+    public int update(Predicate<Map<String, Object>> where,
+                      Map<String, Object> patch) throws IOException {
+        Objects.requireNonNull(where);
+        Objects.requireNonNull(patch);
+        checkNotClosed();
+        List<Long> offsets = new ArrayList<>();
+        for (long off : scanAllOffsets()) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null && where.test(row)) offsets.add(off);
         }
+        return updateAt(offsets, patch);
     }
 
-    private void selectViaSecondaryIndex(RandomAccessFile raf, String[] findingCols, String indexedColName,
-                                         ColumnType[] condTypes, Predicate<RowView> condition,
-                                         Map<String, List<Object>> tempColumns) throws IOException {
-        Map<Object, Set<Object>> indexMap = secondaryIndexes.get(indexedColName);
-        String[] colNames = new String[]{indexedColName};
+    // ─────────────────────────── DQL / DML (Condition — индексы) ───────────────────────────
 
-        for (Map.Entry<Object, Set<Object>> entry : indexMap.entrySet()) {
-            RowView view = new RowView(new Object[]{entry.getKey()}, condTypes, colNames);
-            if (condition.test(view)) {
-                for (Object pk : entry.getValue()) {
-                    Long offset = primaryIndex.get(pk);
-                    if (offset != null) {
-                        Map<String, Object> row = RecordCodec.read(raf, schema, offset);
-                        if (row != null) {
-                            for (String findCol : findingCols) {
-                                tempColumns.get(findCol).add(row.get(findCol));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private Map<String, Object[]> buildResultMap(Map<String, List<Object>> tempColumns) {
-        Map<String, Object[]> result = new LinkedHashMap<>();
-        for (Map.Entry<String, List<Object>> entry : tempColumns.entrySet()) {
-            result.put(entry.getKey(), entry.getValue().toArray());
+    /** SELECT * WHERE … через индексы, если возможно. */
+    public List<Map<String, Object>> select(Condition where) throws IOException {
+        Objects.requireNonNull(where);
+        checkNotClosed();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (long off : resolveOffsets(where)) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null && matches(where, row)) result.add(row);
         }
         return result;
     }
 
-    /**
-     * Обновляет поля у записей, удовлетворяющих заданному условию.
-     * <p>
-     * Обновление выполняется по принципу append-only: старая версия записи помечается
-     * удалённой ({@code tombstone = 1}), а новая дописывается в конец файла с обновлением
-     * индексов и откатом при ошибке валидации. При накоплении удалённых записей запускает сжатие файла.
-     *
-     * @param newValues     словарь обновляемых столбцов и их новых значений
-     * @param conditionCols массив имён столбцов, используемых в предикате {@code condition}
-     * @param condition     условие отбора строк для обновления (если {@code null}, обновляются все записи)
-     * @return количество обновлённых записей
-     * @throws IOException              при ошибке ввода-вывода
-     * @throws IllegalArgumentException если {@code newValues} пуст или равен {@code null}
-     * @throws NullValueException       если новое значение PK или {@code NOT NULL} столбца равно {@code null}
-     * @throws NonUniqueValueException  если новое значение уникального поля конфликтует с существующей записью
-     */
-    public long updateItems(Map<String, Object> newValues,
-                            String[] conditionCols,
-                            Predicate<RowView> condition) throws IOException {
-        if (newValues == null || newValues.isEmpty()) {
-            throw new IllegalArgumentException("Не переданы поля для обновления");
-        }
-        validateColumnsExist(newValues.keySet().toArray(new String[0]));
-        if (conditionCols != null) {
-            validateColumnsExist(conditionCols);
-        }
-        validateNewValuesBeforeUpdate(newValues);
-
-        String[] safeCondCols = (conditionCols != null) ? conditionCols : new String[0];
-        ColumnType[] condTypes = resolveConditionTypes(safeCondCols);
-        String pkColName = schema.pkColumn().name();
-        long updatedCount = 0;
-
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "rw")) {
-            long currentOffset = 0;
-            long initialFileLength = raf.length();
-
-            while (currentOffset < initialFileLength) {
-                long next = RecordCodec.nextOffset(raf, currentOffset);
-                Map<String, Object> row = RecordCodec.read(raf, schema, currentOffset);
-
-                if (row != null) {
-                    Object[] conditionArgs = extractConditionArgs(row, safeCondCols);
-                    RowView view = new RowView(conditionArgs, condTypes, safeCondCols);
-
-                    if (condition == null || condition.test(view)) {
-                        Object oldPk = row.get(pkColName);
-                        Map<String, Object> updatedRow = new LinkedHashMap<>(row);
-                        updatedRow.putAll(newValues);
-
-                        Object newPk = updatedRow.get(pkColName);
-                        if (newPk == null) throw new NullValueException(pkColName);
-                        if (!Objects.equals(oldPk, newPk) && primaryIndex.containsKey(newPk)) {
-                            throw new NonUniqueValueException(pkColName);
-                        }
-
-                        RecordCodec.markDeleted(raf, currentOffset);
-                        primaryIndex.remove(oldPk);
-                        removeFromSecondaryIndexes(row, oldPk);
-                        tombstoneCount++;
-
-                        try {
-                            long newOffset = RecordCodec.write(raf, schema, updatedRow, false);
-                            primaryIndex.put(newPk, newOffset);
-                            addToSecondaryIndexes(updatedRow, newPk);
-                            totalRecords++;
-                            updatedCount++;
-                        } catch (RuntimeException e) {
-                            raf.seek(currentOffset + 4);
-                            raf.writeByte(0);
-                            primaryIndex.put(oldPk, currentOffset);
-                            addToSecondaryIndexes(row, oldPk);
-                            tombstoneCount--;
-                            throw e;
-                        }
-                    }
-                }
-                currentOffset = next;
+    public int delete(Condition where) throws IOException {
+        Objects.requireNonNull(where);
+        checkNotClosed();
+        int n = 0;
+        for (long off : resolveOffsets(where)) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null && matches(where, row)) {
+                deleteAt(off, row);
+                n++;
             }
         }
-
-        if (shouldCompact()) compact();
-        return updatedCount;
+        return n;
     }
 
-    private void validateNewValuesBeforeUpdate(Map<String, Object> newValues) {
-        for (Map.Entry<String, Object> entry : newValues.entrySet()) {
-            String colName = entry.getKey();
-            Object val = entry.getValue();
-            ColumnDef colDef = findColumnDef(colName);
+    public int update(Condition where, Map<String, Object> patch) throws IOException {
+        Objects.requireNonNull(where);
+        Objects.requireNonNull(patch);
+        checkNotClosed();
+        List<Long> offsets = new ArrayList<>();
+        for (long off : resolveOffsets(where)) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null && matches(where, row)) offsets.add(off);
+        }
+        return updateAt(offsets, patch);
+    }
 
-            if (val == null) {
-                if (!colDef.nullable()) throw new NullValueException(colName);
-                continue;
+    /** COUNT(*) WHERE …; через индексы — быстрее сканa. */
+    public long count(Condition where) throws IOException {
+        Objects.requireNonNull(where);
+        checkNotClosed();
+        long n = 0;
+        for (long off : resolveOffsets(where)) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null && matches(where, row)) n++;
+        }
+        return n;
+    }
+
+    /** EXISTS(…); возвращает на первом совпадении. */
+    public boolean exists(Condition where) throws IOException {
+        Objects.requireNonNull(where);
+        checkNotClosed();
+        for (long off : resolveOffsets(where)) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null && matches(where, row)) return true;
+        }
+        return false;
+    }
+
+    // ─────────────────────────── DQL (без условий) ───────────────────────────
+
+    public List<Map<String, Object>> selectAll() throws IOException {
+        checkNotClosed();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (long off : scanAllOffsets()) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null) result.add(row);
+        }
+        return result;
+    }
+
+    public TableStats getStats() throws IOException {
+        checkNotClosed();
+        long live = 0, tomb = 0, off = 0;
+        long fileLen = raf.length();
+        while (off + HEADER_SIZE <= fileLen) {
+            raf.seek(off);
+            int len = raf.readInt();
+            if (off + HEADER_SIZE + len > fileLen) break;
+            int flags = raf.readUnsignedByte();
+            if ((flags & FLAG_TOMBSTONE) != 0) tomb++; else live++;
+            off += HEADER_SIZE + len;
+        }
+        return new TableStats(live, tomb, fileLen);
+    }
+
+    // ─────────────────────────── Compact ───────────────────────────
+
+    public boolean needsCompaction() throws IOException {
+        return getStats().tombstoneRatio() > COMPACTION_THRESHOLD;
+    }
+
+    public int compact() throws IOException {
+        checkNotClosed();
+        TableStats before = getStats();
+        if (before.tombstoneRecords() == 0) return 0;
+
+        Path tmp = dataFile.resolveSibling(dataFile.getFileName() + ".compact.tmp");
+        Files.deleteIfExists(tmp);
+        try (RandomAccessFile out = new RandomAccessFile(tmp.toFile(), "rw")) {
+            long off = 0, fileLen = raf.length();
+            while (off + HEADER_SIZE <= fileLen) {
+                raf.seek(off);
+                int len = raf.readInt();
+                if (off + HEADER_SIZE + len > fileLen) break;
+                Map<String, Object> row = RecordCodec.read(raf, schema, off);
+                if (row != null) RecordCodec.write(out, schema, row, false);
+                off += HEADER_SIZE + len;
             }
+        }
+
+        raf.close();
+        try {
             try {
-                colDef.type().requireType(val);
-            } catch (MaxLengthExceededException e) {
-                throw new MaxLengthExceededException(colName);
-            } catch (RuntimeException e) {
-                throw new IncorrectType(colDef.type().name(), colName);
+                Files.move(tmp, dataFile, StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, dataFile, StandardCopyOption.REPLACE_EXISTING);
             }
-        }
-    }
-    /**
-     * Помечает как удалённые ({@code tombstone = 1}) все записи таблицы, удовлетворяющие условию,
-     * и удаляет их из первичного и вторичных индексов.
-     * <p>
-     * При достижении порога удалённых записей автоматически запускает сжатие файла данных ({@link #compact()}).
-     *
-     * @param conditionCols массив имён столбцов, используемых в предикате {@code condition}
-     * @param condition     условие отбора строк для удаления (если {@code null}, удаляются все записи)
-     * @return количество удалённых записей
-     * @throws IOException       при ошибке работы с файлом данных
-     * @throws UnknownColumnName если хотя бы один из столбцов в {@code conditionCols} отсутствует в схеме
-     */
-    public long deleteItems(String[] conditionCols,
-                            Predicate<RowView> condition) throws IOException {
-        if (conditionCols != null) {
-            validateColumnsExist(conditionCols);
-        }
+            raf = new RandomAccessFile(dataFile.toFile(), "rw");
 
-        String[] safeCondCols = (conditionCols != null) ? conditionCols : new String[0];
-        ColumnType[] condTypes = resolveConditionTypes(safeCondCols);
-        String pkColName = schema.pkColumn().name();
-        long deletedCount = 0;
-
-        try (RandomAccessFile raf = new RandomAccessFile(dataPath.toFile(), "rw")) {
-            long currentOffset = 0;
-            long fileLength = raf.length();
-
-            while (currentOffset < fileLength) {
-                long next = RecordCodec.nextOffset(raf, currentOffset);
-                Map<String, Object> row = RecordCodec.read(raf, schema, currentOffset);
-
+            // Offsets изменились — индексы перестраиваем с нуля
+            for (Index ix : indexes) ix.clear();
+            for (long off = 0, fileLen = raf.length(); off + HEADER_SIZE <= fileLen; ) {
+                raf.seek(off);
+                int len = raf.readInt();
+                if (off + HEADER_SIZE + len > fileLen) break;
+                Map<String, Object> row = RecordCodec.read(raf, schema, off);
                 if (row != null) {
-                    Object[] conditionArgs = extractConditionArgs(row, safeCondCols);
-                    RowView view = new RowView(conditionArgs, condTypes, safeCondCols);
-
-                    if (condition == null || condition.test(view)) {
-                        Object pkValue = row.get(pkColName);
-                        RecordCodec.markDeleted(raf, currentOffset);
-                        primaryIndex.remove(pkValue);
-                        removeFromSecondaryIndexes(row, pkValue);
-                        tombstoneCount++;
-                        deletedCount++;
-                    }
+                    for (Index ix : indexes) ix.add(row.get(ix.column()), off);
                 }
-                currentOffset = next;
+                off += HEADER_SIZE + len;
             }
+            flushAllIndexes();
+        } catch (IOException e) {
+            closed = true;
+            throw e;
         }
-
-        if (shouldCompact()) compact();
-        return deletedCount;
+        return (int) before.tombstoneRecords();
     }
+
+    // ─────────────────────────── Diagnostics ───────────────────────────
+
     /**
-     * Выполняет сжатие (компактификацию) файла данных таблицы, удаляя записи с флагом {@code tombstone},
-     * и полностью перестраивает первичный индекс в памяти по новым смещениям.
-     *
-     * @throws IOException при ошибке перезаписи или перемещения файла данных
+     * Проверяет, что каждая живая запись есть во всех индексах под своим ключом.
+     * Обратное (что каждый offset индекса ведёт на живую запись) — не проверяется;
+     * для лабораторки этого достаточно.
      */
-    public void compact() throws IOException {
-        Map<Object, Long> updatedIndex = RecordCodec.compactWithIndex(dataPath, schema);
-        primaryIndex.clear();
-        primaryIndex.putAll(updatedIndex);
-        this.totalRecords = primaryIndex.size();
-        this.tombstoneCount = 0;
-    }
-
-    private boolean shouldCompact() {
-        if (totalRecords < MIN_RECORDS_FOR_COMPACT) return false;
-        return ((double) tombstoneCount / totalRecords) >= TOMBSTONE_RATIO_THRESHOLD;
-    }
-
-    private void addToSecondaryIndexes(Map<String, Object> row, Object pkVal) {
-        for (Map.Entry<String, Map<Object, Set<Object>>> entry : secondaryIndexes.entrySet()) {
-            Object val = row.get(entry.getKey());
-            if (val != null) {
-                entry.getValue().computeIfAbsent(val, k -> new HashSet<>()).add(pkVal);
+    public boolean checkIndexConsistency() throws IOException {
+        checkNotClosed();
+        for (long off : scanAllOffsets()) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row == null) continue;
+            for (Index ix : indexes) {
+                Object v = row.get(ix.column());
+                if (v == null) continue;   // ← ДОБАВИТЬ: null не индексируется
+                if (!ix.lookupEq(v).contains(off)) return false;
             }
         }
+        return true;
+    }
+    // ─────────────────────────── Metadata ───────────────────────────
+
+    public Path getDataFile() { return dataFile; }
+    public TableSchema getSchema() { return schema; }
+    public boolean isClosed() { return closed; }
+    public String getName() { return schema.getTableName(); }
+
+    // ─────────────────────────── Internals ───────────────────────────
+
+    private void checkNotClosed() throws IOException {
+        if (closed) throw new IOException("Таблица закрыта: " + dataFile);
     }
 
-    private void removeFromSecondaryIndexes(Map<String, Object> row, Object pkVal) {
-        for (Map.Entry<String, Map<Object, Set<Object>>> entry : secondaryIndexes.entrySet()) {
-            Object val = row.get(entry.getKey());
-            if (val != null) {
-                Set<Object> pks = entry.getValue().get(val);
-                if (pks != null) {
-                    pks.remove(pkVal);
-                    if (pks.isEmpty()) entry.getValue().remove(val);
+    private Index newIndex(String column, ColumnType type, IndexKind kind, boolean unique) {
+        return switch (kind) {
+            case HASH -> new HashIndex(column, type, unique);
+            case TREE -> new TreeIndex(column, type, unique);
+        };
+    }
+
+    private Path indexPath(String column) {
+        return dataFile.getParent().resolve(schema.getTableName() + ".idx." + column);
+    }
+
+    /**
+     * Регистрирует индекс: пробует загрузить с диска (если datSize сходится),
+     * иначе перестраивает сканом. Для create — rebuild не нужен (файл пуст).
+     */
+    private void addIndex(IndexDefinition def, boolean loadOrRebuild) throws IOException {
+        ColumnDef col;
+        try { col = schema.getColumn(def.column()); }
+        catch (ColumnNotFoundException e) {
+            throw new IOException("Индекс на несуществующей колонке: " + def.column());
+        }
+        Index ix = newIndex(def.column(), col.type(), def.kind(), def.unique());
+
+        if (loadOrRebuild) {
+            Path idxFile = indexPath(def.column());
+            boolean loaded = false;
+            if (Files.exists(idxFile)) {
+                try {
+                    if (IndexPersistence.readStoredDatSize(idxFile) == raf.length()) {
+                        ix.loadFromDisk(idxFile);
+                        loaded = true;
+                    }
+                } catch (IOException ignored) {
+                    // не загрузилось — перестроим ниже
                 }
             }
+            if (!loaded) {
+                rebuildSingle(ix);
+                ix.flushToDisk(idxFile, raf.length());
+            }
+        }
+        indexes.add(ix);
+        indexesByColumn.put(ix.column(), ix);
+    }
+
+    /** Перестроить один индекс сканом .dat. */
+    private void rebuildSingle(Index ix) throws IOException {
+        ix.clear();
+        for (long off : scanAllOffsets()) {
+            Map<String, Object> row = RecordCodec.read(raf, schema, off);
+            if (row != null) ix.add(row.get(ix.column()), off);
         }
     }
 
-    private Object[] extractConditionArgs(Map<String, Object> row, String[] conditionCols) {
-        Object[] args = new Object[conditionCols.length];
-        for (int i = 0; i < conditionCols.length; i++) {
-            args[i] = row.get(conditionCols[i]);
+    private void flushAllIndexes() throws IOException {
+        for (Index ix : indexes) {
+            ix.flushToDisk(indexPath(ix.column()), raf.length());
         }
-        return args;
     }
 
-    private ColumnType[] resolveConditionTypes(String[] conditionCols) {
-        ColumnType[] condTypes = new ColumnType[conditionCols.length];
-        for (int i = 0; i < conditionCols.length; i++) {
-            condTypes[i] = findColumnDef(conditionCols[i]).type();
+    /** Offsets всех живых записей, сканом от начала до конца. */
+    private List<Long> scanAllOffsets() throws IOException {
+        List<Long> out = new ArrayList<>();
+        long off = 0, fileLen = raf.length();
+        while (off + HEADER_SIZE <= fileLen) {
+            raf.seek(off);
+            int len = raf.readInt();
+            if (off + HEADER_SIZE + len > fileLen) break;
+            raf.seek(off + 4);
+            int flags = raf.readUnsignedByte();
+            if ((flags & FLAG_TOMBSTONE) == 0) out.add(off);
+            off += HEADER_SIZE + len;
         }
-        return condTypes;
+        return out;
     }
 
-    private ColumnDef findColumnDef(String colName) {
-        for (ColumnDef col : schema.getColumns()) {
-            if (col.name().equals(colName)) return col;
-        }
-        throw new UnknownColumnName(colName);
+    /** Единая точка «где искать offsets»: индексы, если повезёт, иначе полный скан. */
+    private List<Long> resolveOffsets(Condition where) throws IOException {
+        List<Long> idx = tryIndexed(where);
+        return idx != null ? idx : scanAllOffsets();
     }
 
-    private void validateColumnsExist(String[] columnNames) {
-        if (columnNames == null) {
-            throw new IllegalArgumentException("Массив столбцов не может быть null");
+    /** Возвращает offsets из индекса или {@code null}, если индекс не применим. */
+    private List<Long> tryIndexed(Condition c) {
+        if (c instanceof Condition.Eq eq) {
+            Index ix = indexesByColumn.get(eq.column());
+            return ix == null ? null : ix.lookupEq(eq.value());
         }
-        for (String name : columnNames) {
-            findColumnDef(name);
+        if (c instanceof Condition.Gt gt) return rangeOrNull(gt.column(), gt.value(),
+                Index::lookupGt);
+        if (c instanceof Condition.Ge ge) return rangeOrNull(ge.column(), ge.value(),
+                Index::lookupGe);
+        if (c instanceof Condition.Lt lt) return rangeOrNull(lt.column(), lt.value(),
+                Index::lookupLt);
+        if (c instanceof Condition.Le le) return rangeOrNull(le.column(), le.value(),
+                Index::lookupLe);
+
+        if (c instanceof Condition.And and) {
+            List<Long> left = tryIndexed(and.left());
+            List<Long> right = tryIndexed(and.right());
+            if (left != null && right != null) {
+                Set<Long> s = new HashSet<>(left);
+                s.retainAll(right);
+                return new ArrayList<>(s);
+            }
+            if (left != null) return left;   // правая ветка — пост-фильтр в matches
+            if (right != null) return right;
+            return null;
         }
+        if (c instanceof Condition.Or or) {
+            List<Long> left = tryIndexed(or.left());
+            List<Long> right = tryIndexed(or.right());
+            if (left != null && right != null) {
+                Set<Long> s = new HashSet<>(left);
+                s.addAll(right);
+                return new ArrayList<>(s);
+            }
+            return null;   // OR нельзя ускорить, если хотя бы одна ветка не индексирована
+        }
+        return null;
+    }
+
+    /** Для range-запросов: возвращает offsets из TREE-индекса или null. */
+    private List<Long> rangeOrNull(String column, Object value,
+                                   RangeLookup op) {
+        Index ix = indexesByColumn.get(column);
+        if (ix == null) return null;
+        try { return op.apply(ix, value); }
+        catch (UnsupportedOperationException e) { return null; }   // HASH
+    }
+
+    @FunctionalInterface
+    private interface RangeLookup {
+        List<Long> apply(Index ix, Object value);
+    }
+
+    /** Проверка одной строки на условие (пост-фильтр после resolveOffsets). */
+    private boolean matches(Condition c, Map<String, Object> row) {
+        if (c instanceof Condition.Eq eq) return Objects.equals(row.get(eq.column()), eq.value());
+        if (c instanceof Condition.Gt gt) return cmp(row.get(gt.column()), gt.value()) > 0;
+        if (c instanceof Condition.Ge ge) return cmp(row.get(ge.column()), ge.value()) >= 0;
+        if (c instanceof Condition.Lt lt) return cmp(row.get(lt.column()), lt.value()) < 0;
+        if (c instanceof Condition.Le le) return cmp(row.get(le.column()), le.value()) <= 0;
+        if (c instanceof Condition.And and) return matches(and.left(), row) && matches(and.right(), row);
+        if (c instanceof Condition.Or or)  return matches(or.left(), row) || matches(or.right(), row);
+        throw new IllegalStateException("Unknown condition: " + c);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private int cmp(Object a, Object b) {
+        if (a == null || b == null) return a == b ? 0 : (a == null ? -1 : 1);
+        return ((Comparable) a).compareTo(b);
+    }
+
+    private void deleteAt(long off, Map<String, Object> row) throws IOException {
+        for (Index ix : indexes) ix.remove(row.get(ix.column()), off);
+        raf.seek(off + 4);
+        raf.writeByte(FLAG_TOMBSTONE);
+    }
+
+    private int updateAt(List<Long> offsets, Map<String, Object> patch) throws IOException {
+        // 0. Ключи patch существуют в схеме
+        for (String name : patch.keySet()) {
+            try { schema.getColumn(name); }
+            catch (ColumnNotFoundException e) {
+                throw new IllegalArgumentException("Неизвестная колонка в patch: " + name);
+            }
+        }
+        String pkName = schema.pkColumn().name();
+        int updated = 0;
+
+        for (long oldOff : offsets) {
+            Map<String, Object> old = RecordCodec.read(raf, schema, oldOff);
+            if (old == null) continue;
+
+            Map<String, Object> merged = new LinkedHashMap<>(old);
+            merged.putAll(patch);
+
+            // null в обязательных
+            for (ColumnDef col : schema.getColumns()) {
+                if (merged.get(col.name()) == null && !col.nullable()) {
+                    throw new IllegalArgumentException("null в не nullable столбце " + col.name());
+                }
+            }
+
+            // Уникальность для изменившихся значений
+            for (Index ix : indexes) {
+                if (!ix.isUnique()) continue;
+                Object oldVal = old.get(ix.column());
+                Object newVal = merged.get(ix.column());
+                if (newVal == null) continue;
+                if (Objects.equals(oldVal, newVal)) continue;
+                if (!ix.lookupEq(newVal).isEmpty()) {
+                    throw new DuplicateKeyException("idx_" + ix.column(), ix.column(), newVal);
+                }
+            }
+
+            // Кодируем ДО изменения файла: если упадёт — старая цела
+            byte[] payload = RecordCodec.encodePayLoad(schema, merged);
+
+            // Новый offset + запись
+            long newOff = raf.length();
+            raf.seek(newOff);
+            raf.writeInt(payload.length);
+            raf.writeByte(0);
+            raf.write(payload);
+
+            // Tombstone старой
+            raf.seek(oldOff + 4);
+            raf.writeByte(FLAG_TOMBSTONE);
+
+            // Индексы: убрать старую, добавить новую
+            for (Index ix : indexes) {
+                ix.remove(old.get(ix.column()), oldOff);
+                ix.add(merged.get(ix.column()), newOff);
+            }
+            updated++;
+        }
+        return updated;
     }
 }

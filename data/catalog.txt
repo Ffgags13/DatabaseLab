@@ -1,0 +1,8 @@
+# Каталог таблиц
+
+TABLE cars
+COLUMN id INT false true true
+COLUMN brand STRING false false false
+COLUMN price DOUBLE false false false
+COLUMN made DATE false false false
+
