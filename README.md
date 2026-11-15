@@ -118,3 +118,124 @@ classDiagram
     Table ..> RecordCodec : читает / пишет
     Table ..> RowView : фильтрация
 ```
+
+
+
+## Диаграммы последовательностей
+
+### 1. Вставка записи (`INSERT`)
+Показывает захват блокировки записи, проверку внешнего ключа в родительской таблице, запись байтов в `.dat` и обновление индексов.
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as DbCommandApi
+    participant DB as Database
+    participant Tbl as Table
+    participant Codec as RecordCodec
+
+    Client->>API: insert(tableName, row)
+    API->>API: writeLock.lock()
+    API->>DB: insert(tableName, row)
+    DB->>DB: checkParentKeysExist(schema, row)
+    DB->>Tbl: insert(row)
+    Tbl->>Tbl: проверка уникальности PK
+    Tbl->>Codec: write(raf, schema, row, false)
+    Codec-->>Tbl: offset
+    Tbl->>Tbl: обновление primaryIndex и secondaryIndexes
+    API->>API: writeLock.unlock()
+    API-->>Client: void
+```
+
+---
+
+### 2. Выборка записей (`SELECT`)
+Показывает разделяемую блокировку чтения (`readLock`), чтение строк с диска и фильтрацию через `RowView`.
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as DbCommandApi
+    participant DB as Database
+    participant Tbl as Table
+    participant Codec as RecordCodec
+    participant View as RowView
+
+    Client->>API: selectItems(tableName, cols, condCols, predicate)
+    API->>API: readLock.lock()
+    API->>DB: selectItems(...)
+    DB->>Tbl: selectItems(...)
+    loop По записям или индексам
+        Tbl->>Codec: read(raf, schema, offset)
+        Codec-->>Tbl: row (Map)
+        Tbl->>View: new RowView(values, types, colNames)
+        Tbl->>View: predicate.test(view)
+        View-->>Tbl: true / false
+    end
+    Tbl-->>DB: Map<String, Object[]>
+    DB-->>API: результат выборки
+    API->>API: readLock.unlock()
+    API-->>Client: результат выборки
+```
+
+---
+
+### 3. Обновление записей (`UPDATE`)
+Показывает append-only обновление: старая версия помечается как `tombstone`, новая дописывается в конец файла, а при необходимости запускается `compact()`.
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as DbCommandApi
+    participant DB as Database
+    participant Tbl as Table
+    participant Codec as RecordCodec
+
+    Client->>API: updateItems(tableName, newValues, condCols, predicate)
+    API->>API: writeLock.lock()
+    API->>DB: updateItems(...)
+    DB->>DB: checkParentKeysExist() и проверка RESTRICT
+    DB->>Tbl: updateItems(...)
+    loop По подходящим записям
+        Tbl->>Codec: markDeleted(raf, oldOffset)
+        Tbl->>Codec: write(raf, schema, updatedRow, false)
+        Codec-->>Tbl: newOffset
+        Tbl->>Tbl: обновление индексов
+    end
+    opt Доля удалённых записей >= 30%
+        Tbl->>Codec: compactWithIndex(dataPath, schema)
+    end
+    Tbl-->>DB: updatedCount
+    DB-->>API: updatedCount
+    API->>API: writeLock.unlock()
+    API-->>Client: updatedCount
+```
+
+---
+
+### 4. Удаление записей (`DELETE`)
+Показывает проверку ограничений внешних ключей (`RESTRICT`), логическое удаление записей (`tombstone = 1`) и каскадную обработку зависимых таблиц (`CASCADE` / `SET_NULL`).
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as DbCommandApi
+    participant DB as Database
+    participant Tbl as Table
+    participant Codec as RecordCodec
+
+    Client->>API: deleteItems(tableName, condCols, predicate)
+    API->>API: writeLock.lock()
+    API->>DB: deleteItems(...)
+    DB->>DB: ensureNoRestrictBlocks()
+    DB->>Tbl: deleteItems(...)
+    loop По подходящим записям
+        Tbl->>Codec: markDeleted(raf, offset)
+        Tbl->>Tbl: удаление из primaryIndex и secondaryIndexes
+    end
+    Tbl-->>DB: deletedCount
+    DB->>DB: каскадное удаление / SET_NULL в дочерних таблицах
+    DB-->>API: deletedCount
+    API->>API: writeLock.unlock()
+    API-->>Client: deletedCount
+```
