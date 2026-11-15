@@ -65,30 +65,41 @@ public class Lexer {
             }
 
             if (current == '\'') {
+                pos++;                                  // пропустить открывающую '
                 StringBuilder sb = new StringBuilder();
                 while (pos < src.length() && src.charAt(pos) != '\'') {
                     sb.append(src.charAt(pos));
                     pos++;
                 }
-
                 if (pos >= src.length()) {
                     throw new RuntimeException("Unterminated string literal at position " + tokenStartPos);
                 }
-                pos++;
+                pos++;                                  // пропустить закрывающую '
 
                 String word = sb.toString();
                 Token token = new Token(TokenType.STRING, word);
                 token.position = tokenStartPos;
                 tokens.add(token);
                 continue;
-
             }
 
             if (Character.isDigit(current)) {
                 StringBuilder sb = new StringBuilder();
-                while (pos < src.length() && Character.isDigit(src.charAt(pos))) {
-                    sb.append(src.charAt(pos));
-                    pos++;
+                boolean seenDot = false;
+                while (pos < src.length()) {
+                    char c = src.charAt(pos);
+                    if (Character.isDigit(c)) {
+                        sb.append(c);
+                        pos++;
+                    } else if (c == '.' && !seenDot
+                            && pos + 1 < src.length()
+                            && Character.isDigit(src.charAt(pos + 1))) {
+                        seenDot = true;
+                        sb.append('.');
+                        pos++;
+                    } else {
+                        break;
+                    }
                 }
 
                 String word = sb.toString();
@@ -96,7 +107,6 @@ public class Lexer {
                 token.position = tokenStartPos;
                 tokens.add(token);
                 continue;
-
             }
 
             Token token = null;

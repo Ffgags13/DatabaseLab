@@ -183,6 +183,13 @@ public class Parser {
         switch (t.type) {
             case NUMBER -> {
                 advance();
+                if (t.value.indexOf('.') >= 0) {
+                    try {
+                        return new Literal(Double.parseDouble(t.value));
+                    } catch (NumberFormatException e) {
+                        throw new ParseException("Bad number '" + t.value + "' at position " + t.position);
+                    }
+                }
                 try {
                     return new Literal(Long.parseLong(t.value));
                 } catch (NumberFormatException e) {
