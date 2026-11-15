@@ -8,10 +8,29 @@ import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-
+/**
+ * Утилитный класс для бинарной сериализации записей и низкоуровневой работы с файлом данных таблицы.
+ * <p>
+ * Формат хранения каждой записи в файле:
+ * <ul>
+ *   <li>{@code int length} (4 байта) — размер полезной нагрузки в байтах;</li>
+ *   <li>{@code byte tombstone} (1 байт) — флаг удаления записи ({@code 1} — удалена, {@code 0} — активна);</li>
+ *   <li>{@code byte[] data} — сериализованные значения столбцов с префиксом {@code null}-флага перед каждым полем.</li>
+ * </ul>
+ */
 public class RecordCodec {
     private static final int DEFAULT_CONTAINER_SIZE = 64;
-
+    /**
+     * Сериализует строку таблицы в массив байтов согласно схеме.
+     *
+     * @param schema схема таблицы
+     * @param row    словарь значений в формате {@code имя_столбца -> значение}
+     * @return массив байтов с закодированными данными строки
+     * @throws NullValueException         если отсутствует PK или передан {@code null} для {@code NOT NULL} столбца
+     * @throws IncorrectType              если тип значения не соответствует типу столбца в схеме
+     * @throws MaxLengthExceededException если длина строкового значения превышает допустимый лимит
+     * @throws UnknownColumnName          если в {@code row} присутствуют столбцы, отсутствующие в схеме
+     */
     public static byte[] encodePayLoad(TableSchema schema, Map<String, Object> row){
        //Проверяем PK
        if(row.get(schema.pkColumn().name()) == null){
@@ -56,7 +75,14 @@ public class RecordCodec {
 
 
     }
-
+    /**
+     * Восстанавливает словарь значений строки из массива байтов.
+     *
+     * @param schema    схема таблицы
+     * @param container бинарная полезная нагрузка записи
+     * @return восстановленная строка в формате {@code имя_столбца -> значение}
+     * @throws IllegalStateException если после чтения всех столбцов в буфере остались лишние байты
+     */
     public static Map<String, Object> decodePayLoad(TableSchema schema, byte[] container){
         try {
             DataInputStream inContainer = new DataInputStream(new ByteArrayInputStream(container));
@@ -89,6 +115,17 @@ public class RecordCodec {
     // 1) Int length
     // 2) tombstone строка удалена
     // 3) byte[] data
+    /**
+     * Дописывает новую запись в конец файла данных.
+     *
+     * @param file      открытый файл таблицы
+     * @param schema    схема таблицы
+     * @param row       записываемая строка
+     * @param tombstone флаг удалённой записи ({@code true}, если запись сразу помечается удалённой)
+     * @return байтовое смещение (offset), по которому запись сохранена в файле
+     * @throws IOException              при ошибке записи на диск
+     * @throws NonUniqueValueException  если нарушена уникальность полей для активной записи
+     */
     public static long write(RandomAccessFile file, TableSchema schema,
                              Map<String, Object> row, boolean tombstone) throws IOException{
         if(!tombstone && !slowCheckUnique(file, schema, row)){
@@ -102,7 +139,15 @@ public class RecordCodec {
         file.write(container);
         return offset;
     }
-
+    /**
+     * Считывает запись из файла по заданному смещению.
+     *
+     * @param file   открытый файл таблицы
+     * @param schema схема таблицы
+     * @param offset байтовое смещение начала записи
+     * @return словарь значений строки или {@code null}, если запись помечена как удалённая ({@code tombstone})
+     * @throws IOException при ошибке чтения или неожиданном конце файла
+     */
     public static Map<String, Object> read(RandomAccessFile file,
                                            TableSchema schema, long offset) throws IOException{
         file.seek(offset);
@@ -121,6 +166,14 @@ public class RecordCodec {
     }
 
     // функция находящая смещение следующей записи, нужная для быстрого обхода файла
+    /**
+     * Вычисляет смещение следующей записи в файле без чтения её содержимого.
+     *
+     * @param file   открытый файл таблицы
+     * @param offset смещение текущей записи
+     * @return байтовое смещение начала следующей записи
+     * @throws IOException при ошибке чтения заголовка записи
+     */
     public static long nextOffset(RandomAccessFile file, long offset)throws IOException {
         file.seek(offset);
         int length = file.readInt();
@@ -130,13 +183,28 @@ public class RecordCodec {
     }
 
     //Пометить запись deleted по offset
+    /**
+     * Помечает запись по указанному смещению как удалённую, устанавливая байт {@code tombstone = 1}.
+     *
+     * @param file   открытый файл таблицы
+     * @param offset байтовое смещение удаляемой записи
+     * @throws IOException при ошибке записи в файл
+     */
     public static void markDeleted(RandomAccessFile file, long offset) throws IOException{
         file.seek(offset+4);
         file.writeByte(1);
 
     }
 
-
+    /**
+     * Проверяет добавляемую строку на соблюдение уникальности полей полным перебором файла.
+     *
+     * @param file     открытый файл таблицы
+     * @param schema   схема таблицы
+     * @param rowToAdd проверяемая строка
+     * @return {@code true}, если дубликатов по уникальным столбцам не найдено
+     * @throws NonUniqueValueException если в файле уже существует активная запись с таким же уникальным значением
+     */
     // Проверка новой записи на уникальность полным перебором
     public static boolean slowCheckUnique(RandomAccessFile file, TableSchema schema, Map<String, Object> rowToAdd) {
         long currentOffset = 0;
@@ -169,6 +237,17 @@ public class RecordCodec {
     }
 
     // Поиск всех PK по значению произвольного поля
+    /**
+     * Находит значения первичных ключей всех активных записей с заданным значением указанного столбца.
+     *
+     * @param file        открытый файл таблицы
+     * @param schema      схема таблицы
+     * @param columnName  имя столбца для фильтрации
+     * @param targetValue искомое значение поля
+     * @return список первичных ключей подходящих записей
+     * @throws IOException       при ошибке чтения файла
+     * @throws UnknownColumnName если указанный столбец отсутствует в схеме
+     */
     public static List<Object> slowFindPksByColumn(RandomAccessFile file, TableSchema schema,
                                                    String columnName, Object targetValue) throws IOException {
         boolean columnExists = false;
@@ -205,6 +284,16 @@ public class RecordCodec {
     }
 
     // Поиск offset записи по значению PK (возвращает -1, если не найдено)
+    /**
+     * Находит байтовое смещение активной записи в файле по значению её первичного ключа.
+     *
+     * @param file     открытый файл таблицы
+     * @param schema   схема таблицы
+     * @param targetPk искомое значение первичного ключа (не {@code null})
+     * @return смещение записи в файле или {@code -1}, если запись не найдена
+     * @throws IOException          при ошибке чтения файла
+     * @throws NullPointerException если {@code targetPk} равен {@code null}
+     */
     public static long slowFindOffsetByPk(RandomAccessFile file, TableSchema schema, Object targetPk) throws IOException {
         if (targetPk == null) {
             throw new NullPointerException("Передан null PK для поиска");
@@ -234,11 +323,18 @@ public class RecordCodec {
 
 
     //Очистка мусора в файле
+    /**
+     * Выполняет сжатие файла данных, перезаписывая во временный файл только активные записи
+     * (без флага {@code tombstone}) и атомарно заменяя исходный файл.
+     *
+     * @param dataPath путь к файлу данных таблицы ({@code .dat})
+     * @return количество сохранённых (активных) записей после очистки
+     * @throws IOException при ошибке чтения, записи или перемещения файла
+     */
     public static long compact(java.nio.file.Path dataPath) throws IOException {
         java.nio.file.Path tempPath = dataPath.resolveSibling(dataPath.getFileName() + ".tmp");
         long survivingRecords = 0;
 
-        // 1. Открываем старый файл на чтение и новый временный на запись
         try (RandomAccessFile srcFile = new RandomAccessFile(dataPath.toFile(), "r");
              RandomAccessFile dstFile = new RandomAccessFile(tempPath.toFile(), "rw")) {
 
@@ -250,7 +346,6 @@ public class RecordCodec {
                 int length = srcFile.readInt();
                 byte tombstone = srcFile.readByte();
 
-                // Если запись живая (tombstone == 0) — копируем её байты во временный файл
                 if ((tombstone & 1) == 0) {
                     byte[] payload = new byte[length];
                     srcFile.readFully(payload);
@@ -261,12 +356,10 @@ public class RecordCodec {
                     survivingRecords++;
                 }
 
-                // Переходим к следующей записи в исходном файле
                 currentOffset += 4L + 1L + length;
             }
-        } // Оба RandomAccessFile автоматически закрываются здесь!
+        }
 
-        // 2. Безопасно заменяем старый файл новым сжатым файлом
         java.nio.file.Files.move(
                 tempPath,
                 dataPath,
@@ -276,7 +369,14 @@ public class RecordCodec {
 
         return survivingRecords;
     }
-
+    /**
+     * Выполняет сжатие файла данных с одновременным перестроением первичного индекса.
+     *
+     * @param dataPath путь к файлу данных таблицы ({@code .dat})
+     * @param schema   схема таблицы для извлечения значений первичного ключа
+     * @return обновлённый первичный индекс в формате {@code значение_PK -> новое_смещение}
+     * @throws IOException при ошибке работы с файлами
+     */
     public static Map<Object, Long> compactWithIndex(java.nio.file.Path dataPath, TableSchema schema) throws IOException {
         java.nio.file.Path tempPath = dataPath.resolveSibling(dataPath.getFileName() + ".tmp");
         Map<Object, Long> newPrimaryIndex = new java.util.HashMap<>();
@@ -297,11 +397,9 @@ public class RecordCodec {
                     byte[] payload = new byte[length];
                     srcFile.readFully(payload);
 
-                    // Декодируем запись, чтобы узнать её PK для нового смещения
                     Map<String, Object> row = decodePayLoad(schema, payload);
                     Object pkValue = row.get(pkColName);
 
-                    // Запоминаем новое смещение в сжатом файле
                     long newOffset = dstFile.length();
                     newPrimaryIndex.put(pkValue, newOffset);
 

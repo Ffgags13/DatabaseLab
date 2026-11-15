@@ -11,7 +11,14 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.function.Predicate;
-
+/**
+ * Представляет отдельную таблицу базы данных, управляющую хранением записей на диске
+ * и индексами в оперативной памяти.
+ * <p>
+ * Схема таблицы сохраняется в JSON-файле ({@code .schema.json}), а бинарные записи —
+ * в файле данных ({@code .dat}). Для быстрого поиска поддерживаются первичный индекс
+ * ({@code PK -> offset}) и вторичные индексы ({@code значение -> множество PK}).
+ */
 public class Table {
     private final Path dataPath;
     private final Path schemaPath;
@@ -28,7 +35,14 @@ public class Table {
     private static final double TOMBSTONE_RATIO_THRESHOLD = 0.3;
     private long totalRecords = 0;
     private long tombstoneCount = 0;
-
+    /**
+     * Создаёт новую таблицу в указанной директории, сохраняет её схему на диск
+     * и инициализирует пустой файл данных.
+     *
+     * @param dbDirectory директория базы данных
+     * @param schema      схема создаваемой таблицы
+     * @throws IOException при ошибке создания директории или файлов таблицы
+     */
     public Table(Path dbDirectory, TableSchema schema) throws IOException {
         Files.createDirectories(dbDirectory);
         String tableName = schema.getTableName();
@@ -45,7 +59,14 @@ public class Table {
             Files.createFile(this.dataPath);
         }
     }
-
+    /**
+     * Загружает существующую таблицу с диска по её имени и восстанавливает индексы в памяти.
+     *
+     * @param dbDirectory директория базы данных
+     * @param tableName   имя загружаемой таблицы
+     * @throws IOException           при ошибке чтения схемы или файла данных
+     * @throws IllegalStateException если файл схемы или данных таблицы отсутствует на диске
+     */
     public Table(Path dbDirectory, String tableName) throws IOException {
         this.dataPath = dbDirectory.resolve(tableName + DATA_SUFFIX);
         this.schemaPath = dbDirectory.resolve(tableName + SCHEMA_SUFFIX);
@@ -102,7 +123,15 @@ public class Table {
         this.totalRecords = total;
         this.tombstoneCount = deleted;
     }
-
+    /**
+     * Строит вторичный индекс по указанному столбцу, сканируя существующие записи таблицы,
+     * и сохраняет обновлённый список индексов в файл схемы.
+     *
+     * @param colName имя индексируемого столбца
+     * @throws IOException                при ошибке чтения данных или записи схемы
+     * @throws UnknownColumnName          если столбец отсутствует в схеме таблицы
+     * @throws IndexAlreadyExistsException если столбец является PK или индекс по нему уже существует
+     */
     public void createIndex(String colName) throws IOException {
         ColumnDef colDef = findColumnDef(colName);
         if (colDef.equals(schema.pkColumn()) || secondaryIndexes.containsKey(colName)) {
@@ -139,7 +168,14 @@ public class Table {
     public String getShortSchema() { return schema.showShortSchema(); }
     public String getFullSchema() { return schema.showSchema(); }
     public TableSchema getSchema() { return schema; }
-
+    /**
+     * Вставляет новую строку, переданную в виде массива значений в порядке столбцов схемы.
+     *
+     * @param values массив значений полей
+     * @throws IOException              при ошибке записи на диск
+     * @throws IllegalArgumentException если передан {@code null}
+     * @throws AmountValuesException    если длина массива не совпадает с числом столбцов схемы
+     */
     public void insert(Object[] values) throws IOException {
         if (values == null) {
             throw new IllegalArgumentException("Передан null вместо массива значений");
@@ -155,7 +191,15 @@ public class Table {
         }
         insert(row);
     }
-
+    /**
+     * Вставляет новую строку в таблицу, записывая её на диск и обновляя индексы.
+     *
+     * @param row словарь значений в формате {@code имя_столбца -> значение}
+     * @throws IOException              при ошибке записи на диск
+     * @throws IllegalArgumentException если передан {@code null}
+     * @throws NullValueException       если значение первичного ключа равно {@code null}
+     * @throws NonUniqueValueException  если запись с таким первичным ключом уже существует
+     */
     public void insert(Map<String, Object> row) throws IOException {
         if (row == null) {
             throw new IllegalArgumentException("Передан null вместо словаря значений");
@@ -178,6 +222,14 @@ public class Table {
             totalRecords++;
         }
     }
+    /**
+     * Выполняет прямой поиск записи по значению первичного ключа с использованием первичного индекса.
+     *
+     * @param pkValue значение первичного ключа
+     * @return словарь значений найденной строки или {@code null}, если запись не найдена
+     * @throws IOException              при ошибке чтения файла данных
+     * @throws IllegalArgumentException если {@code pkValue} равен {@code null}
+     */
     public Map<String, Object> selectByPk(Object pkValue) throws IOException {
         if (pkValue == null) {
             throw new IllegalArgumentException("PK не может быть null");
@@ -190,7 +242,12 @@ public class Table {
             return RecordCodec.read(raf, schema, offset);
         }
     }
-
+    /**
+     * Считывает все активные (неудалённые) строки таблицы в виде списка массивов значений.
+     *
+     * @return список массивов значений строк в порядке их хранения в файле
+     * @throws IOException при ошибке чтения файла данных
+     */
     public List<Object[]> getAllRows() throws IOException {
         ColumnDef[] cols = schema.getColumns();
         List<Object[]> rows = new ArrayList<>();
@@ -215,7 +272,19 @@ public class Table {
         }
         return rows;
     }
-
+    /**
+     * Выполняет выборку значений указанных столбцов для записей, удовлетворяющих предикату.
+     * <p>
+     * Если условие задано по одному столбцу, для которого существует первичный или вторичный
+     * индекс, поиск автоматически выполняется по индексу без полного сканирования файла.
+     *
+     * @param findingCols   массив имён столбцов, значения которых должны попасть в результат
+     * @param conditionCols массив имён столбцов, передаваемых в {@link RowView} для проверки условия
+     * @param condition     условие отбора строк (если {@code null}, выбираются все активные записи)
+     * @return словарь в формате {@code имя_столбца -> массив_значений}
+     * @throws IOException       при ошибке чтения файла данных
+     * @throws UnknownColumnName если хотя бы один из указанных столбцов отсутствует в схеме
+     */
     public Map<String, Object[]> selectItems(String[] findingCols,
                                              String[] conditionCols,
                                              Predicate<RowView> condition) throws IOException {
@@ -315,6 +384,23 @@ public class Table {
         }
         return result;
     }
+
+    /**
+     * Обновляет поля у записей, удовлетворяющих заданному условию.
+     * <p>
+     * Обновление выполняется по принципу append-only: старая версия записи помечается
+     * удалённой ({@code tombstone = 1}), а новая дописывается в конец файла с обновлением
+     * индексов и откатом при ошибке валидации. При накоплении удалённых записей запускает сжатие файла.
+     *
+     * @param newValues     словарь обновляемых столбцов и их новых значений
+     * @param conditionCols массив имён столбцов, используемых в предикате {@code condition}
+     * @param condition     условие отбора строк для обновления (если {@code null}, обновляются все записи)
+     * @return количество обновлённых записей
+     * @throws IOException              при ошибке ввода-вывода
+     * @throws IllegalArgumentException если {@code newValues} пуст или равен {@code null}
+     * @throws NullValueException       если новое значение PK или {@code NOT NULL} столбца равно {@code null}
+     * @throws NonUniqueValueException  если новое значение уникального поля конфликтует с существующей записью
+     */
     public long updateItems(Map<String, Object> newValues,
                             String[] conditionCols,
                             Predicate<RowView> condition) throws IOException {
@@ -403,7 +489,18 @@ public class Table {
             }
         }
     }
-
+    /**
+     * Помечает как удалённые ({@code tombstone = 1}) все записи таблицы, удовлетворяющие условию,
+     * и удаляет их из первичного и вторичных индексов.
+     * <p>
+     * При достижении порога удалённых записей автоматически запускает сжатие файла данных ({@link #compact()}).
+     *
+     * @param conditionCols массив имён столбцов, используемых в предикате {@code condition}
+     * @param condition     условие отбора строк для удаления (если {@code null}, удаляются все записи)
+     * @return количество удалённых записей
+     * @throws IOException       при ошибке работы с файлом данных
+     * @throws UnknownColumnName если хотя бы один из столбцов в {@code conditionCols} отсутствует в схеме
+     */
     public long deleteItems(String[] conditionCols,
                             Predicate<RowView> condition) throws IOException {
         if (conditionCols != null) {
@@ -443,7 +540,12 @@ public class Table {
         if (shouldCompact()) compact();
         return deletedCount;
     }
-
+    /**
+     * Выполняет сжатие (компактификацию) файла данных таблицы, удаляя записи с флагом {@code tombstone},
+     * и полностью перестраивает первичный индекс в памяти по новым смещениям.
+     *
+     * @throws IOException при ошибке перезаписи или перемещения файла данных
+     */
     public void compact() throws IOException {
         Map<Object, Long> updatedIndex = RecordCodec.compactWithIndex(dataPath, schema);
         primaryIndex.clear();

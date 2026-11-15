@@ -8,14 +8,26 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
-
+/**
+ * Центральный менеджер базы данных, управляющий жизненным циклом таблиц
+ * и поддержанием ссылочной целостности между ними.
+ * <p>
+ * Отслеживает граф внешних ключей ({@link Link}) и обеспечивает соблюдение правил
+ * {@code RESTRICT}, {@code SET_NULL} и {@code CASCADE} при вставке, обновлении и удалении записей.
+ */
 public class Database {
     private final Path dbDir;
     private final Map<String, Table> tables = new HashMap<>();
 
     private record ChildRef(String childTableName, String fkColumn, Link link) {}
     private final Map<String, List<ChildRef>> incomingLinks = new HashMap<>();
-
+    /**
+     * Инициализирует экземпляр базы данных в указанной директории и загружает
+     * все существующие таблицы, найденные по файлам схем.
+     *
+     * @param dbDir путь к директории базы данных
+     * @throws IOException при ошибке создания директории или загрузки файлов таблиц
+     */
     public Database(Path dbDir) throws IOException {
         this.dbDir = dbDir;
         Files.createDirectories(dbDir);
@@ -48,7 +60,20 @@ public class Database {
                     .add(new ChildRef(childName, entry.getKey(), link));
         }
     }
-
+    /**
+     * Создаёт новую таблицу с заданной схемой и внешними ключами.
+     * <p>
+     * Автоматически строит вторичные индексы по всем столбцам внешних ключей (кроме PK)
+     * для ускорения каскадных операций и проверок целостности.
+     *
+     * @param schema схема создаваемой таблицы
+     * @param links  карта внешних ключей формата {@code имя_столбца -> связь} (может быть {@code null})
+     * @throws IOException                 при ошибке создания файлов на диске
+     * @throws TableAlreadyExistsException если таблица с таким именем уже существует
+     * @throws UnknownParentNameException  если родительская таблица, указанная в связи, не найдена
+     * @throws IncorrectType               если тип столбца внешнего ключа не совпадает с типом PK родителя
+     * @throws IllegalArgumentException    если для правила {@code SET_NULL} выбран столбец с ограничением {@code NOT NULL}
+     */
     public void createTable(TableSchema schema, Map<String, Link> links) throws IOException {
         String tableName = schema.getTableName();
         if (tables.containsKey(tableName)) {
@@ -95,7 +120,14 @@ public class Database {
             }
         }
     }
-
+    /**
+     * Удаляет таблицу из базы данных и стирает её файлы схемы и данных с диска.
+     *
+     * @param tableName имя удаляемой таблицы
+     * @throws IOException                   при ошибке удаления файлов с диска
+     * @throws UnknownTableNameException     если таблица с таким именем не найдена
+     * @throws ForeignKeyConstraintException если на таблицу ссылаются внешние ключи других таблиц
+     */
     public void dropTable(String tableName) throws IOException {
         getTable(tableName);
 
@@ -117,7 +149,13 @@ public class Database {
         Files.deleteIfExists(dbDir.resolve(tableName + Table.DATA_SUFFIX));
         Files.deleteIfExists(dbDir.resolve(tableName + Table.SCHEMA_SUFFIX));
     }
-
+    /**
+     * Создаёт вторичный индекс по указанному столбцу таблицы.
+     *
+     * @param tableName имя таблицы
+     * @param colName   имя индексируемого столбца
+     * @throws IOException при ошибке чтения данных или сохранения схемы
+     */
     public void createIndex(String tableName, String colName) throws IOException {
         getTable(tableName).createIndex(colName);
     }
@@ -133,13 +171,30 @@ public class Database {
     public List<Object[]> getAllRows(String tableName) throws IOException {
         return getTable(tableName).getAllRows();
     }
-
+    /**
+     * Выполняет выборку столбцов из таблицы по заданному условию.
+     *
+     * @param tableName     имя таблицы
+     * @param findingCols   массив имён возвращаемых столбцов
+     * @param conditionCols массив имён столбцов, используемых в предикате
+     * @param condition     условие фильтрации строк (может быть {@code null})
+     * @return словарь формата {@code имя_столбца -> массив_значений}
+     * @throws IOException при ошибке чтения данных с диска
+     */
     public Map<String, Object[]> selectItems(String tableName,
                                              String[] findingCols,
                                              String[] conditionCols,
                                              Predicate<RowView> condition) throws IOException {
         return getTable(tableName).selectItems(findingCols, conditionCols, condition);
     }
+    /**
+     * Вставляет новую запись в таблицу, переданную в виде массива значений в порядке столбцов схемы.
+     *
+     * @param tableName имя таблицы
+     * @param values    массив значений полей
+     * @throws IOException                   при ошибке записи на диск
+     * @throws ForeignKeyConstraintException если значение внешнего ключа отсутствует в родительской таблице
+     */
     public void insert(String tableName, Object[] values) throws IOException {
         Table table = getTable(tableName);
         if (values == null) {
@@ -157,6 +212,14 @@ public class Database {
         insert(tableName, row);
     }
 
+    /**
+     * Вставляет новую запись в таблицу с предварительной проверкой существования родительских ключей.
+     *
+     * @param tableName имя таблицы
+     * @param row       словарь значений в формате {@code имя_столбца -> значение}
+     * @throws IOException                   при ошибке записи на диск
+     * @throws ForeignKeyConstraintException если значение внешнего ключа не найдено в родительской таблице
+     */
     public void insert(String tableName, Map<String, Object> row) throws IOException {
         Table table = getTable(tableName);
         if (row == null) {
@@ -179,7 +242,18 @@ public class Database {
             }
         }
     }
-
+    /**
+     * Обновляет записи в таблице с проверкой внешних ключей и выполнением каскадных правил
+     * ({@code CASCADE}, {@code SET_NULL}, {@code RESTRICT}) при изменении первичного ключа.
+     *
+     * @param tableName     имя таблицы
+     * @param newValues     словарь обновляемых столбцов и новых значений
+     * @param conditionCols массив имён столбцов, используемых в условии
+     * @param condition     предикат отбора записей для обновления
+     * @return количество обновлённых записей
+     * @throws IOException                   при ошибке работы с диском
+     * @throws ForeignKeyConstraintException если обновление нарушает ссылочную целостность
+     */
     public long updateItems(String tableName,
                             Map<String, Object> newValues,
                             String[] conditionCols,

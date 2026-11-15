@@ -11,7 +11,12 @@ import java.time.LocalDate;
 import java.util.Objects;
 
 //Constant-Specific Method Implementation
-
+/**
+ * Поддерживаемые типы данных столбцов таблицы.
+ * <p>
+ * Реализует валидацию и приведение значений, бинарную сериализацию/десериализацию
+ * в поток данных, а также операции сравнения для фильтрации строк.
+ */
 public enum ColumnType {
     INT{
         public Integer requireType(Object item){
@@ -156,6 +161,7 @@ public enum ColumnType {
             return a.toString().compareTo(b.toString());
         }
     },
+    /** Календарная дата ({@link LocalDate}), сериализуемая в виде количества дней с начала эпохи. */
     DATEDAYS {
         public Long requireType(Object item){
             return switch (Objects.requireNonNull(item)){
@@ -193,18 +199,46 @@ public enum ColumnType {
         }
     };
     //Метод проверяет и приводит типы если возможно к виду удобному для сериализации
+    /**
+     * Проверяет соответствие значения типу столбца и при необходимости приводит его
+     * к представлению, готовому для бинарной записи.
+     *
+     * @param item исходное значение ячейки (не {@code null})
+     * @return проверенное или преобразованное значение
+     * @throws IllegalArgumentException   если тип объекта несовместим с типом столбца
+     * @throws MaxLengthExceededException если длина строки превышает допустимый лимит
+     */
     public abstract Object requireType(Object item);
 
     //Метод преобразующий тип полученный после requireType в бинарный поток
-
+    /**
+     * Сериализует значение в выходной бинарный поток.
+     *
+     * @param outStream выходной поток данных
+     * @param item      записываемое значение
+     */
     public abstract void binaryWrite(DataOutputStream outStream, Object item);
 
     //Метод читает объект из бинарного потока
+    /**
+     * Считывает и восстанавливает значение из входного бинарного потока.
+     *
+     * @param inStream входной поток данных
+     * @return десериализованное значение
+     * @throws IllegalStateException при нехватке байтов или ошибке чтения из потока
+     */
     public abstract Object binaryRead(DataInputStream inStream);
 
     //сравнение объектов
     protected abstract int compareValues(Object a, Object b);
-
+    /**
+     * Проверяет два значения на равенство ({@code a == b}).
+     * Если хотя бы один из аргументов равен {@code null}, возвращает {@code false}.
+     *
+     * @param a первое значение
+     * @param b второе значение
+     * @return {@code true}, если значения равны
+     */
     public boolean eq(Object a, Object b) {
         if (a == null || b == null) {
             return false;

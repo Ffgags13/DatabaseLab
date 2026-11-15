@@ -8,11 +8,26 @@ import main.core.domainExceptions.*;
 public final class TableSchema{
     //Первый столбец всегда pk, поэтому не нужно хранить статус в колонке, нужна упорядоченная map
     //Хранение в hashmap нужно для быстрого поиска столбца по имени
+    /**
+     * Схема таблицы базы данных, содержащая описание столбцов, индексов и внешних ключей.
+     * <p>
+     * Первый столбец в переданном массиве всегда считается первичным ключом (PK),
+     * поэтому он обязан быть неуникальным запрещено ({@code isUniquie == true}) и не допускать {@code null}.
+     */
     private Set<String> indexedColumns = new HashSet<>();
     private final Map<String, ColumnDef> columnsByName = new LinkedHashMap<>();
     private final String tableName;
     private Map<String, Link> foreignKeys = new HashMap<>();
-
+    /**
+     * Создаёт схему таблицы с заданным именем и набором столбцов.
+     *
+     * @param tableName имя таблицы
+     * @param cols      массив описаний столбцов (первый элемент становится первичным ключом)
+     * @throws IllegalArgumentException     если массив столбцов пуст или равен {@code null}
+     * @throws NullableKeyException         если первичный ключ (первый столбец) допускает {@code null}
+     * @throws KeyNotUniqueException        если первичный ключ не помечен как уникальный
+     * @throws DuplicateColumnNameException если в массиве встречаются столбцы с одинаковыми именами
+     */
     public TableSchema(String tableName , ColumnDef[] cols) {
         if(cols == null || cols.length == 0){
             throw new IllegalArgumentException();
@@ -31,10 +46,21 @@ public final class TableSchema{
             columnsByName.put(col.name(), col);
         }
     }
+    /**
+     * Возвращает описание столбца первичного ключа (первого столбца схемы).
+     *
+     * @return описание столбца PK
+     */
     public ColumnDef pkColumn() {
         return columnsByName.values().iterator().next();
     }
-
+    /**
+     * Возвращает описание столбца по его имени.
+     *
+     * @param colName имя искомого столбца
+     * @return описание столбца {@link ColumnDef}
+     * @throws UnknownColumnName если столбец с таким именем отсутствует в схеме
+     */
     public ColumnDef getColumn(String colName){
         if (!columnsByName.containsKey(colName)){
             throw new UnknownColumnName(colName);
@@ -49,7 +75,12 @@ public final class TableSchema{
     public ColumnDef[] getColumns() {
         return columnsByName.values().toArray(new ColumnDef[0]);
     }
-
+    /**
+     * Формирует подробное текстовое представление схемы в виде ASCII-таблицы
+     * с указанием типов, допустимости {@code null} и ключей ({@code PRI}, {@code UNI}).
+     *
+     * @return отформатированная таблица со структурой схемы
+     */
     public String showSchema() {
         ColumnDef[] cols = getColumns();
         ColumnDef pk = pkColumn();
@@ -97,6 +128,11 @@ public final class TableSchema{
         sb.append(separator);
         return sb.toString();
     }
+    /**
+     * Формирует компактное однострочное представление схемы таблицы.
+     *
+     * @return краткое строковое описание столбцов и ограничений
+     */
     public String showShortSchema() {
         ColumnDef[] cols = getColumns();
         ColumnDef pk = pkColumn();
@@ -123,22 +159,41 @@ public final class TableSchema{
 
         return sb.toString().trim();
     }
+    /**
+     * Возвращает множество имён столбцов, для которых построены вторичные индексы.
+     *
+     * @return множество индексируемых столбцов
+     */
     public Set<String> getIndexedColumns() {
         if (indexedColumns == null) {
             indexedColumns = new HashSet<>();
         }
         return indexedColumns;
     }
+    /**
+     * Регистрирует столбец в списке индексируемых.
+     *
+     * @param colName имя индексируемого столбца
+     */
     public void addIndexedColumn(String colName) {
         getIndexedColumns().add(colName);
     }
+    /**
+     * Возвращает карту внешних ключей таблицы в формате {@code имя_столбца -> связь}.
+     *
+     * @return словарь внешних ключей
+     */
     public Map<String, Link> getForeignKeys() {
         if (foreignKeys == null) {
             foreignKeys = new HashMap<>();
         }
         return foreignKeys;
     }
-
+    /**
+     * Устанавливает набор внешних ключей для таблицы.
+     *
+     * @param foreignKeys карта внешних ключей (если {@code null}, инициализируется пустой словарь)
+     */
     public void setForeignKeys(Map<String, Link> foreignKeys) {
         this.foreignKeys = (foreignKeys != null) ? new HashMap<>(foreignKeys) : new HashMap<>();
     }
