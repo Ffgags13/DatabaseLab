@@ -3,37 +3,9 @@ API
   Raw string(len > 5, stripped())
   Parser -> UI
   Exceptions***&nbsp;
-2. Parser -> Command -> Core&nbsp;
-     createtable(Table name, schema, Map<String FKcol, Link link>)&nbsp;&nbsp;&nbsp;
-   class Link {
-   String Name
-   enum DeleteBehaviour{CASCADE, SET NULL, RESTRICT}
-   enum DeleteBehaviour{CASCADE, SET NULL, RESTRICT}
-   }
 
-Два варианта вызова insert
-     1. insert(string tableName, Object[] values)
-     2. insert(string tableName, Map<Name, Object> ) Остальные будут null 
-
-Два варианта вызова select
-    1. getTable(string TableName) 
-    2. selectItems(string TableName, string[] finding cols, string[] condition cols, labmda boolean (Object[])) -> Map<String Name, Object[]>
-
-    
-Вызов update
-     UpdateItems(string TableName, Map<string finding col, Object newValue> , string[] condition cols, labmda boolean (Object[]))
-     
-
-
-
-Вызов delete
-     DeleteItems(string TableName, string[] condition cols, labmda boolean (Object[]))
-     
-
-Вызов DropTable
-    DropTable(String Table name)
-
-3. UI->Command->Core&nbsp;&nbsp;
+3.Parser->Command->Core
+4. UI->Command->Core&nbsp;&nbsp;
    insert(string tableName, Object[] values)
        UnknownTableNameException
        IllegalArgumentException("Передан null вместо массива значений");
@@ -63,7 +35,9 @@ getSchema(string TableName) -> TableSchema schema
     1Вариант-> вся таблица
       getShortSchema(String tableName)-> string ( пример Table: users | id (INT, PRI) | username (STRING, UNI, NOT NULL) | bio (STRING) |)
           UnknownTableNameException
-      getTable(String tableName) -> Object[] Содержит значения в столбцах по порядку как они идут в schema
+      getTable(String tableName) -> List<Object[]> Содержит значения в столбцах по порядку как они идут в schema
+      Внутренний массив Object[] — это одна конкретная строка (запись) таблицы,
+      Внешний список List<...> — это коллекция всех таких строк в таблице
           UnknownTableNameException
   2Вариант
        selectItems(string TableName, string[] finding cols, string[] condition cols, labmda boolean (Object[])) -> Map<String Name, Object[]>
@@ -117,3 +91,8 @@ UnknownTableNameException
     UnknownParentTableNameException
     UnknownColumnName(String colname) Внешний ключ содержится в несуществующем столбце
        
+CreateIndex
+    createIndex(String tableName, String colName) -> void
+        UnknownTableNameException(String tableName) // Таблица tableName не найдена
+        UnknownColumnName(String colName)         // Столбец colName не существует в таблице
+        IndexAlreadyExistsException(String colName) // (Опционально) Индекс по столбцу colName уже создан
