@@ -76,7 +76,19 @@ classDiagram
         -String parentTableName
         -Behaviour onUpdate
         -Behaviour onDelete
+        +Link(parentTableName, onUpdate, onDelete)
+        +getParentTableName() String
+        +getOnUpdate() Behaviour
+        +getOnDelete() Behaviour
     }
+    class Behaviour {
+        <<enumeration>>
+        CASCADE
+        SET_NULL
+        RESTRICT
+    }
+
+    Link --> Behaviour : использует правила
 
     class RecordCodec {
         <<utility>>
