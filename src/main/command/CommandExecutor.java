@@ -43,8 +43,6 @@ public class CommandExecutor {
             case Ast.Select sel      -> select(sel);
             case Ast.Update upd      -> update(upd);
             case Ast.Delete del      -> delete(del);
-            default -> throw new CommandException(
-                    "Неподдерживаемый тип команды: " + stmt.getClass().getSimpleName());
         };
     }
 
@@ -151,6 +149,8 @@ public class CommandExecutor {
                 compiled.conditionCols(), compiled.predicate());
     }
 
+    // ---------- helpers ----------
+
     private static ColumnType parseType(String s) {
         try {
             return ColumnType.valueOf(s.toUpperCase());
@@ -159,13 +159,24 @@ public class CommandExecutor {
         }
     }
 
-    /** Приводит литерал из AST к представлению, ожидаемому ColumnType. */
+    /**
+     * Проверяет, что литерал из AST совместим с типом столбца, и возвращает
+     * <b>исходное</b> значение (не результат {@link ColumnType#requireType}).
+     * <p>
+     * ВАЖНО: нельзя возвращать результат {@code requireType}: для {@code STRING}
+     * он возвращает {@code byte[]}, и {@link main.core.RecordCodec#encodePayLoad}
+     * при повторном вызове {@code binaryWrite} получит {@code byte[]} вместо
+     * {@code CharSequence} — это приводит к {@code IncorrectType}.
+     * Для {@code INT} и {@code DATEDAYS} исходное значение ({@code Long}/{@code String})
+     * корректно принимается {@code binaryWrite} и {@code compareValues}.
+     */
     private static Object convert(ColumnType type, Object literal, String colName) {
         if (literal == null) return null;
         try {
-            return type.requireType(literal);
+            type.requireType(literal);   // только валидация типа
         } catch (RuntimeException e) {
             throw new IncorrectType(type.name(), colName);
         }
+        return literal;                  // возвращаем оригинал
     }
 }
