@@ -34,43 +34,23 @@
 - **Индексы** — `Table.createIndex`, использование `primaryIndex` / `secondaryIndexes` в `Table.selectItems`, авто-построение индексов по FK-столбцам.
 - **Интеграция Parser → Command → Core** — сквозные тесты.
 ## Архитектура
-┌─────────────────────────────────────────────────────────────────────────┐
-│ UI │
-│ Main · SqlExecutor · QueryResult · TablePrinter │
-│ Raw string(len > 5, stripped()) ──────────────► Parser │
-│ ◄────────────── Exceptions*** · QueryResult │
-│ UI → Command → Core: DbCommandApi.insert(string, Object[]) │
-└─────────────────────────────────────────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Parser │
-│ Lexer → Parser → Ast (sealed: Statement / Expr) │
-│ Token · TokenType · ParseException │
-└─────────────────────────────────────────────────────────────────────────┘
-│ Ast.Statement
-▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Command │
-│ CommandExecutor · ExpressionCompiler · DbCommandApi │
-│ CommandException │
-│ Ast.Expr ──► (String[] conditionCols, Predicate<RowView>) │
-│ Ast.Statement ──► DbCommandApi │
-└─────────────────────────────────────────────────────────────────────────┘
-│ DatabaseException · CommandException
-▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Core │
-│ Database · Table · TableSchema · ColumnDef · ColumnType · Link │
-│ RecordCodec · RowView · domainExceptions │
-└─────────────────────────────────────────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Диск │
-│ <table>.dat — бинарные записи (length | tombstone | payload) │
-│ <table>.schema.json — схема (столбцы, индексы, внешние ключи) │
-└─────────────────────────────────────────────────────────────────────────┘
+### Поток данных по слоям
+
+| Шаг | Слой | Что происходит |
+|---|---|---|
+| 1 | **UI** | `SqlExecutor` принимает `Raw string(len > 5, stripped())`, проверяет длину |
+| 2 | **Parser** | `Lexer` → `Parser` → `Ast.Statement`; ошибки → `ParseException` → UI |
+| 3 | **Command** | `CommandExecutor` диспетчеризует `Ast.Statement`; `ExpressionCompiler` компилирует `Ast.Expr` в `Predicate<RowView>` |
+| 4 | **Command → Core** | `DbCommandApi` (RW-lock) вызывает `Database`; ошибки ядра → `CommandException` |
+| 5 | **Core** | `Database` → `Table` → `RecordCodec` (диск) / `RowView` (фильтрация); индексы `primaryIndex` / `secondaryIndexes` |
+| 6 | **UI** | `QueryResult` (`message` / `schema+rowsData` / `columnsData`) → `TablePrinter` |
+
+### Границы слоёв
+
+- **UI ↔ Parser** — `String` на вход, `Ast.Statement` / `ParseException` на выход.
+- **Parser ↔ Command** — только `Ast.Statement` / `Ast.Expr`; Command не знает о лексере.
+- **Command ↔ Core** — только `DbCommandApi` и `Predicate<RowView>`; Core не знает об AST.
+- **UI → Command → Core** — прямой путь `DbCommandApi.insert(string, Object[])` для интерактивного режима.
 ## Диаграмма классов
 
 ```mermaid
