@@ -34,23 +34,43 @@
 - **Индексы** — `Table.createIndex`, использование `primaryIndex` / `secondaryIndexes` в `Table.selectItems`, авто-построение индексов по FK-столбцам.
 - **Интеграция Parser → Command → Core** — сквозные тесты.
 ## Архитектура
-UI (Main, SqlExecutor, TablePrinter, QueryResult)
+┌─────────────────────────────────────────────────────────────────────────┐
+│ UI │
+│ Main · SqlExecutor · QueryResult · TablePrinter │
+│ Raw string(len > 5, stripped()) ──────────────► Parser │
+│ ◄────────────── Exceptions*** · QueryResult │
+│ UI → Command → Core: DbCommandApi.insert(string, Object[]) │
+└─────────────────────────────────────────────────────────────────────────┘
 │
-│ Raw string(len > 5, stripped())
 ▼
-Parser (Lexer → Parser → Ast) ──ParseException──► UI
-│
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Parser │
+│ Lexer → Parser → Ast (sealed: Statement / Expr) │
+│ Token · TokenType · ParseException │
+└─────────────────────────────────────────────────────────────────────────┘
 │ Ast.Statement
 ▼
-Command (CommandExecutor, ExpressionCompiler, DbCommandApi, CommandException)
-│
-│ DatabaseException / CommandException
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Command │
+│ CommandExecutor · ExpressionCompiler · DbCommandApi │
+│ CommandException │
+│ Ast.Expr ──► (String[] conditionCols, Predicate<RowView>) │
+│ Ast.Statement ──► DbCommandApi │
+└─────────────────────────────────────────────────────────────────────────┘
+│ DatabaseException · CommandException
 ▼
-Core (Database, Table, TableSchema, ColumnDef, ColumnType, Link,
-RecordCodec, RowView, domainExceptions)
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Core │
+│ Database · Table · TableSchema · ColumnDef · ColumnType · Link │
+│ RecordCodec · RowView · domainExceptions │
+└─────────────────────────────────────────────────────────────────────────┘
 │
 ▼
-Диск: <table>.dat (бинарные записи) + <table>.schema.json
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Диск │
+│ <table>.dat — бинарные записи (length | tombstone | payload) │
+│ <table>.schema.json — схема (столбцы, индексы, внешние ключи) │
+└─────────────────────────────────────────────────────────────────────────┘
 ## Диаграмма классов
 
 ```mermaid
