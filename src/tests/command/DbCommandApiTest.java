@@ -1,7 +1,6 @@
 package tests.command;
 
-import main.command.CommandException;
-import main.command.DbCommandApi;
+import main.command.*;
 import main.core.*;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;

@@ -1,7 +1,7 @@
 package main.index;
 
 import main.core.ColumnType;
-import main.domainExceptions.DuplicateKeyException;
+import main.core.domainExceptions.DuplicateKeyException;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -101,7 +101,7 @@ public final class HashIndex implements Index {
             case INT     -> Integer.parseInt(raw);
             case DOUBLE  -> Double.parseDouble(raw);
             case BOOLEAN -> Boolean.parseBoolean(raw);
-            case DATE    -> LocalDate.parse(raw);
+            case DATEDAYS    -> LocalDate.parse(raw);
             case STRING  -> raw;
         };
     }

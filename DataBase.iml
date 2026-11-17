@@ -7,7 +7,7 @@
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
-    <orderEntry type="module-library">
+    <orderEntry type="module-library" exported="">
       <library name="JUnit4">
         <CLASSES>
           <root url="jar://$MAVEN_REPOSITORY$/junit/junit/4.13.1/junit-4.13.1.jar!/" />
@@ -17,7 +17,7 @@
         <SOURCES />
       </library>
     </orderEntry>
-    <orderEntry type="module-library">
+    <orderEntry type="module-library" exported="">
       <library name="JUnit5.8.1">
         <CLASSES>
           <root url="jar://$MAVEN_REPOSITORY$/org/junit/jupiter/junit-jupiter/5.8.1/junit-jupiter-5.8.1.jar!/" />
@@ -33,6 +33,72 @@
         <SOURCES />
       </library>
     </orderEntry>
-    <orderEntry type="library" name="gson-2.15.0" level="project" />
+    <orderEntry type="library" exported="" name="gson-2.15.0" level="project" />
+    <orderEntry type="module-library" exported="">
+      <library>
+        <CLASSES>
+          <root url="jar://$USER_HOME$/Downloads/com.google.gson_2.15.0.jar!/" />
+        </CLASSES>
+        <JAVADOC />
+        <SOURCES />
+      </library>
+    </orderEntry>
+    <orderEntry type="module-library" exported="">
+      <library>
+        <CLASSES />
+        <JAVADOC />
+        <SOURCES>
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/documentation/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/documentation/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/documentation/src/tools/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-api/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-api/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-engine/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-engine/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-migrationsupport/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-params/src/jmh/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-params/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-jupiter-params/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-commons/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-commons/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-console/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-engine/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-engine/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-launcher/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-launcher/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-reporting/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-reporting/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-suite-api/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-suite-engine/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-platform-testkit/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-start/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-vintage-engine/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-vintage-engine/src/testFixtures/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/junit-vintage-engine/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/jupiter-tests/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tests/src/jmh/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tests/src/processStarter/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tests/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tests/src/test/resources/modules-2500" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/graalvm-starter/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/graalvm-starter/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/gradle-missing-engine/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/junit-start/compact" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/junit-start/modular" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/jupiter-starter/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/jupiter-starter/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/maven-surefire-compatibility/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/memory-cleanup/src" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/standalone/src" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/projects/vintage/src/test/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/src/archUnit/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/src/graalVmTest/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/src/main/java" />
+          <root url="jar://$USER_HOME$/Downloads/JUnit 6.1.3 source code.zip!/junit-team-junit-framework-4bbfe65/platform-tooling-support-tests/src/test/java" />
+        </SOURCES>
+      </library>
+    </orderEntry>
+    <orderEntry type="library" exported="" name="junit.jupiter" level="project" />
   </component>
 </module>

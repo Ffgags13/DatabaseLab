@@ -1,96 +1,171 @@
 package main.command;
 
-import main.core.Catalog;
-import main.core.ColumnDef;
-import main.core.Table;
+import main.core.*;
+import main.core.domainExceptions.AmountValuesException;
+import main.core.domainExceptions.IncorrectType;
+import main.query.Ast;
+import main.query.Parser;
 
-import java.io.IOException;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
-public final class CommandExecutor {
+/**
+ * Выполняет AST-команду над {@link DbCommandApi}.
+ * <p>
+ * Диспетчеризует {@link Ast.Statement} по методам фасада, приводя литералы
+ * к типам столбцов через {@link ColumnType#requireType} и компилируя
+ * WHERE-выражения через {@link ExpressionCompiler}.
+ * <p>
+ * Все ошибки ядра ({@link main.core.domainExceptions.DatabaseException})
+ * и ошибки парсинга ({@link main.query.ParseException}) пробрасываются наверх
+ * без изменений — UI различает их по типу.
+ */
+public class CommandExecutor {
 
-    public sealed interface Result {
-        record Rows(List<Map<String, Object>> rows) implements Result {}
-        record Count(long count) implements Result {}
-        record Ok() implements Result {}
+    private final DbCommandApi api;
+
+    public CommandExecutor(DbCommandApi api) {
+        this.api = api;
     }
 
-    private final Catalog catalog;
-
-    public CommandExecutor(Catalog catalog) {
-        this.catalog = Objects.requireNonNull(catalog, "catalog");
+    /** Точка входа для UI: строка -> результат. */
+    public Object execute(String sql) {
+        return execute(Parser.parse(sql));
     }
 
-    public Result execute(Command cmd) throws IOException {
-        return switch (cmd) {
-            case Command.CreateTable ct -> {
-                ColumnDef[] cols = ct.columns().toArray(new ColumnDef[0]);
-                catalog.createTable(ct.name(), cols);
-                yield new Result.Ok();
-            }
-            case Command.DropTable dt -> {
-                catalog.dropTable(dt.name());
-                yield new Result.Ok();
-            }
-            case Command.CreateIndex ci -> {
-                catalog.createIndex(ci.table(), ci.column(), ci.kind(), ci.unique());
-                yield new Result.Ok();
-            }
-            case Command.DropIndex di -> {
-                catalog.dropIndex(di.table(), di.column());
-                yield new Result.Ok();
-            }
-
-            case Command.Insert ins -> {
-                catalog.getTable(ins.table()).insert(ins.row());
-                yield new Result.Count(1);
-            }
-            case Command.Update upd -> {
-                Table t = catalog.getTable(upd.table());
-                long n = (upd.where() == null)
-                        ? t.update(r -> true, upd.patch())
-                        : t.update(upd.where(), upd.patch());
-                maybeCompact(t);
-                yield new Result.Count(n);
-            }
-            case Command.Delete del -> {
-                Table t = catalog.getTable(del.table());
-                long n = (del.where() == null)
-                        ? t.delete(r -> true)
-                        : t.delete(del.where());
-                maybeCompact(t);
-                yield new Result.Count(n);
-            }
-
-            case Command.Select sel -> {
-                Table t = catalog.getTable(sel.table());
-                List<Map<String, Object>> rows = (sel.where() == null)
-                        ? t.selectAll()
-                        : t.select(sel.where());
-                if (!sel.columns().isEmpty()) {
-                    rows = project(rows, sel.columns());
-                }
-                yield new Result.Rows(rows);
-            }
+    public Object execute(Ast.Statement stmt) {
+        return switch (stmt) {
+            case Ast.CreateTable ct -> { createTable(ct); yield null; }
+            case Ast.CreateIndex ci -> { createIndex(ci); yield null; }
+            case Ast.DropTable dt    -> { dropTable(dt);    yield null; }
+            case Ast.DropIndex di    -> { dropIndex(di);    yield null; }
+            case Ast.Insert ins      -> { insert(ins);      yield null; }
+            case Ast.Select sel      -> select(sel);
+            case Ast.Update upd      -> update(upd);
+            case Ast.Delete del      -> delete(del);
+            default -> throw new CommandException(
+                    "Неподдерживаемый тип команды: " + stmt.getClass().getSimpleName());
         };
     }
 
-    private static List<Map<String, Object>> project(
-            List<Map<String, Object>> rows, List<String> cols) {
-        List<Map<String, Object>> out = new ArrayList<>(rows.size());
-        for (Map<String, Object> row : rows) {
-            Map<String, Object> p = new LinkedHashMap<>();
-            for (String c : cols) p.put(c, row.get(c));
-            out.add(p);
+    // ---------- DDL ----------
+
+    private void createTable(Ast.CreateTable ct) {
+        if (ct.columns().isEmpty()) {
+            throw new CommandException("Нужен хотя бы один столбец");
         }
-        return out;
+        ColumnDef[] cols = new ColumnDef[ct.columns().size()];
+        for (int i = 0; i < cols.length; i++) {
+            Ast.ColumnDef cd = ct.columns().get(i);
+            ColumnType type = parseType(cd.type());
+            boolean isPk = (i == 0);
+            // PK: NOT NULL + UNIQUE. Остальные: nullable, не unique (если не задано иное в DDL).
+            cols[i] = new ColumnDef(cd.name(), type, !isPk, isPk);
+        }
+        TableSchema schema = new TableSchema(ct.name(), cols);
+        // Внешние ключи парсер пока не поддерживает — передаём null.
+        api.createTable(ct.name(), schema, null);
     }
 
-    private static void maybeCompact(Table t) throws IOException {
-        if (t.needsCompaction()) t.compact();
+    private void createIndex(Ast.CreateIndex ci) {
+        api.createIndex(ci.table(), ci.column());
+    }
+
+    private void dropTable(Ast.DropTable dt) {
+        api.dropTable(dt.name());
+    }
+
+    private void dropIndex(Ast.DropIndex di) {
+        // В DbCommandApi/Table/Database нет метода dropIndex — заглушка.
+        throw new CommandException("DROP INDEX не поддерживается ядром");
+    }
+
+    // ---------- DML ----------
+
+    private void insert(Ast.Insert ins) {
+        TableSchema schema = api.getSchema(ins.table());
+        ColumnDef[] cols = schema.getColumns();
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        if (ins.columns().isEmpty()) {
+            if (ins.values().size() != cols.length) {
+                throw new AmountValuesException(cols.length);
+            }
+            for (int i = 0; i < cols.length; i++) {
+                row.put(cols[i].name(), convert(cols[i].type(), ins.values().get(i).value(), cols[i].name()));
+            }
+        } else {
+            if (ins.columns().size() != ins.values().size()) {
+                throw new CommandException("Число столбцов и значений не совпадает");
+            }
+            for (int i = 0; i < ins.columns().size(); i++) {
+                String colName = ins.columns().get(i);
+                ColumnDef def = schema.getColumn(colName); // UnknownColumnName, если нет
+                row.put(colName, convert(def.type(), ins.values().get(i).value(), colName));
+            }
+        }
+        api.insert(ins.table(), row);
+    }
+
+    private Object select(Ast.Select sel) {
+        TableSchema schema = api.getSchema(sel.table());
+
+        if (sel.columns().isEmpty()) {
+            // SELECT * -> List<Object[]>
+            return api.getTable(sel.table());
+        }
+
+        String[] finding = sel.columns().toArray(new String[0]);
+        for (String c : finding) schema.getColumn(c); // валидация -> UnknownColumnName
+
+        if (sel.where() == null) {
+            return api.selectItems(sel.table(), finding, new String[0], null);
+        }
+        ExpressionCompiler.Compiled compiled = ExpressionCompiler.compile(schema, sel.where());
+        return api.selectItems(sel.table(), finding,
+                compiled.conditionCols(), compiled.predicate());
+    }
+
+    private long update(Ast.Update upd) {
+        TableSchema schema = api.getSchema(upd.table());
+        Map<String, Object> newValues = new LinkedHashMap<>();
+        for (Map.Entry<String, Ast.Literal> e : upd.assignments().entrySet()) {
+            ColumnDef def = schema.getColumn(e.getKey());
+            newValues.put(e.getKey(), convert(def.type(), e.getValue().value(), e.getKey()));
+        }
+        if (upd.where() == null) {
+            return api.updateItems(upd.table(), newValues, new String[0], null);
+        }
+        ExpressionCompiler.Compiled compiled = ExpressionCompiler.compile(schema, upd.where());
+        return api.updateItems(upd.table(), newValues,
+                compiled.conditionCols(), compiled.predicate());
+    }
+
+    private long delete(Ast.Delete del) {
+        TableSchema schema = api.getSchema(del.table());
+        if (del.where() == null) {
+            return api.deleteItems(del.table(), new String[0], null);
+        }
+        ExpressionCompiler.Compiled compiled = ExpressionCompiler.compile(schema, del.where());
+        return api.deleteItems(del.table(),
+                compiled.conditionCols(), compiled.predicate());
+    }
+
+    private static ColumnType parseType(String s) {
+        try {
+            return ColumnType.valueOf(s.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new CommandException("Неизвестный тип столбца: " + s);
+        }
+    }
+
+    /** Приводит литерал из AST к представлению, ожидаемому ColumnType. */
+    private static Object convert(ColumnType type, Object literal, String colName) {
+        if (literal == null) return null;
+        try {
+            return type.requireType(literal);
+        } catch (RuntimeException e) {
+            throw new IncorrectType(type.name(), colName);
+        }
     }
 }

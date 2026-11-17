@@ -1,8 +1,8 @@
 package main.index;
 
 import main.core.ColumnType;
-import main.domainExceptions.DuplicateColumnNameException;
-import main.domainExceptions.NullableKeyException;
+import main.core.domainExceptions.DuplicateColumnNameException;
+import main.core.domainExceptions.NullableKeyException;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -34,8 +34,7 @@ public final class TreeIndex implements Index {
     public void add(Object value, long offset) {
         // TreeIndex в принципе не индексирует null
         if (value == null) {
-            throw new NullableKeyException(
-                    "TreeIndex «" + column + "» не допускает null");
+            throw new NullableKeyException();
         }
         if (!(value instanceof Comparable)) {
             throw new IllegalArgumentException(
@@ -128,7 +127,7 @@ public final class TreeIndex implements Index {
             case INT     -> Integer.parseInt(raw);
             case DOUBLE  -> Double.parseDouble(raw);
             case BOOLEAN -> Boolean.parseBoolean(raw);
-            case DATE    -> LocalDate.parse(raw);
+            case DATEDAYS    -> LocalDate.parse(raw);
             case STRING  -> raw;
         };
     }

@@ -6,8 +6,13 @@ import java.util.Map;
 public final class Ast {
     private Ast(){}
 
-    public interface Statement {}
-    public interface Expr {}
+    // Явно перечисляем все реализации — switch станет исчерпывающим
+    public sealed interface Statement
+            permits CreateTable, CreateIndex, DropTable, DropIndex,
+            Insert, Select, Update, Delete {}
+
+    public sealed interface Expr
+            permits Literal, Column, Comparison, Logical, Not {}
 
     public record ColumnDef(String name, String type){}
 
