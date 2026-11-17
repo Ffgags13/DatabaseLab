@@ -34,7 +34,23 @@
 - **Индексы** — `Table.createIndex`, использование `primaryIndex` / `secondaryIndexes` в `Table.selectItems`, авто-построение индексов по FK-столбцам.
 - **Интеграция Parser → Command → Core** — сквозные тесты.
 ## Архитектура
-
+UI (Main, SqlExecutor, TablePrinter, QueryResult)
+│
+│ Raw string(len > 5, stripped())
+▼
+Parser (Lexer → Parser → Ast) ──ParseException──► UI
+│
+│ Ast.Statement
+▼
+Command (CommandExecutor, ExpressionCompiler, DbCommandApi, CommandException)
+│
+│ DatabaseException / CommandException
+▼
+Core (Database, Table, TableSchema, ColumnDef, ColumnType, Link,
+RecordCodec, RowView, domainExceptions)
+│
+▼
+Диск: <table>.dat (бинарные записи) + <table>.schema.json
 ## Диаграмма классов
 
 ```mermaid
