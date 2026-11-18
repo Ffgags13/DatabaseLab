@@ -8,20 +8,37 @@ import main.core.domainExceptions.DatabaseException;
 import main.query.Ast;
 import main.query.ParseException;
 import main.query.Parser;
+
 import java.util.List;
 import java.util.Map;
 
-
+/**
+ * Прослойка между консольным UI и парсером/исполнителем SQL-запросов.
+ * <p>
+ * Отвечает за первичную валидацию входной строки, передачу её на разбор в {@link Parser},
+ * выполнение через {@link CommandExecutor} и упаковку результата или перехваченной ошибки в {@link QueryResult}.
+ */
 public class SqlExecutor {
     private final DbCommandApi api;
     private final CommandExecutor executor;
 
+    /**
+     * Создаёт исполнитель SQL-запросов, привязанный к указанному фасаду базы данных.
+     *
+     * @param api - фасад для выполнения команд над базой данных
+     */
     public SqlExecutor(DbCommandApi api) {
         this.api = api;
         this.executor = new CommandExecutor(api);
     }
 
-
+    /**
+     * Валидирует сырую SQL-строку, запускает парсинг и выполнение запроса,
+     * возвращая унифицированный ответ для отображения в консоли.
+     *
+     * @param rawSql - исходная строка запроса, введённая пользователем
+     * @return объект {@link QueryResult} с данными выборки, сообщением об успехе или описанием ошибки
+     */
     @SuppressWarnings("unchecked")
     public QueryResult execute(String rawSql) {
         if (rawSql == null) {

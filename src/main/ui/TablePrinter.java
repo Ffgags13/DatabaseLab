@@ -7,11 +7,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Утилитный класс для форматированного табличного вывода данных в консоль.
+ * <p>
+ * Поддерживает отрисовку как полного набора строк таблицы, так и результатов
+ * проекции по отдельным столбцам с автоматическим выравниванием ширины колонок.
+ */
 public final class TablePrinter {
 
     private TablePrinter() {
     }
 
+    /**
+     * Выводит в консоль все строки таблицы в виде ASCII-таблицы.
+     *
+     * @param schema - схема таблицы с описанием имён и порядка столбцов
+     * @param rows - список строк таблицы (каждая строка представлена массивом значений)
+     */
     public static void printRows(TableSchema schema, List<Object[]> rows) {
         if (schema == null) {
             System.out.println("(схема таблицы не задана)");
@@ -39,6 +51,12 @@ public final class TablePrinter {
         printGrid(headers, tableData);
     }
 
+    /**
+     * Выводит в консоль результат выборки по конкретным столбцам,
+     * транспонируя поколоночное представление в построчную таблицу.
+     *
+     * @param data - словарь значений в формате {@code имя_столбца -> массив_значений}
+     */
     public static void printColumns(Map<String, Object[]> data) {
         if (data == null || data.isEmpty()) {
             System.out.println("(нет данных для отображения)");
@@ -63,6 +81,12 @@ public final class TablePrinter {
         printGrid(headers, tableData);
     }
 
+    /**
+     * Вычисляет ширину столбцов и отрисовывает сетку таблицы с заголовками и строками.
+     *
+     * @param headers - список заголовков столбцов
+     * @param rows - список отформатированных строк таблицы
+     */
     private static void printGrid(List<String> headers, List<List<String>> rows) {
         int colCount = headers.size();
         int[] widths = new int[colCount];
@@ -97,6 +121,12 @@ public final class TablePrinter {
         System.out.println("Всего записей: " + rows.size());
     }
 
+    /**
+     * Форматирует и выводит одну строку таблицы с учётом заданной ширины каждого столбца.
+     *
+     * @param cells - список строковых значений ячеек строки
+     * @param widths - массив максимальных ширин столбцов
+     */
     private static void printLine(List<String> cells, int[] widths) {
         StringBuilder sb = new StringBuilder("|");
         for (int i = 0; i < cells.size(); i++) {

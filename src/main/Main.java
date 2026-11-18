@@ -10,24 +10,46 @@ import main.ui.QueryResult;
 import main.ui.SqlExecutor;
 import main.ui.TablePrinter;
 import java.nio.file.Path;
-import java.util.Scanner;
-import java.util.Map;
 import java.util.List;
+import java.util.Map;
+import java.util.Scanner;
 
+/**
+ * Точка входа в приложение и консольный пользовательский интерфейс для работы с СУБД.
+ * <p>
+ * Поддерживает два режима работы с БД:
+ * <ul>
+ *   <li>SQL-консоль — ввод и выполнение SQL-подобных запросов через {@link SqlExecutor};</li>
+ *   <li>Интерактивный режим — пошаговое выполнение операций напрямую через фасад {@link DbCommandApi}.</li>
+ * </ul>
+ */
 public class Main {
     private static final Path DB_DIR = Path.of("db_data");
     private final DbCommandApi api;
     private final SqlExecutor sqlExecutor;
     private final Scanner scanner;
 
+    /**
+     * Создаёт экземпляр консольного приложения с заданными зависимостями.
+     *
+     * @param api - фасад для прямого выполнения операций над базой данных
+     * @param sqlExecutor - обработчик текстовых SQL-запросов
+     * @param scanner - сканер для чтения пользовательского ввода из консоли
+     */
     public Main(DbCommandApi api, SqlExecutor sqlExecutor, Scanner scanner) {
         this.api = api;
         this.sqlExecutor = sqlExecutor;
         this.scanner = scanner;
     }
 
+    /**
+     * Точка входа в программу. Инициализирует хранилище базы данных,
+     * связывает компоненты UI и запускает главный цикл меню.
+     *
+     * @param args аргументы командной строки (не используются)
+     */
     public static void main(String[] args) {
-        try (Scanner scanner = new Scanner(System.in)){
+        try (Scanner scanner = new Scanner(System.in)) {
             DbCommandApi api = new DbCommandApi(DB_DIR);
             SqlExecutor sqlExecutor = new SqlExecutor(api);
             Main app = new Main(api, sqlExecutor, scanner);
@@ -37,6 +59,9 @@ public class Main {
         }
     }
 
+    /**
+     * Запускает главный цикл выбора режима работы с БД.
+     */
     public void run() {
         while (true) {
             System.out.println("------ Главное меню СУБД ------");
@@ -63,6 +88,10 @@ public class Main {
         }
     }
 
+    /**
+     * Запускает цикл обработки текстовых SQL-запросов пользователя.
+     * Выход из режима осуществляется по команде {@code exit}.
+     */
     public void runSqlConsoleMode() {
         System.out.println("\n------ SQL-консоль (введите 'exit' для выхода) ------");
         while (true) {
@@ -81,6 +110,10 @@ public class Main {
         }
     }
 
+    /**
+     * Запускает интерактивное меню для пошагового выполнения операций над таблицами
+     * напрямую через {@link DbCommandApi}.
+     */
     public void runInteractiveMode() {
         while (true) {
             System.out.println("\n------ Интерактивный режим ------");
@@ -114,6 +147,10 @@ public class Main {
         }
     }
 
+    /**
+     * Создаёт две демонстрационные таблицы ({@code users} и {@code orders}),
+     * связанные внешним ключом с правилами {@code CASCADE} при обновлении и {@code RESTRICT} при удалении.
+     */
     private void createDemoTables() {
         ColumnDef[] usersCols = new ColumnDef[]{
                 new ColumnDef("id", ColumnType.INT, false, true),
@@ -136,6 +173,9 @@ public class Main {
         System.out.println("Демо-таблицы \"users\" и \"orders\" успешно созданы!");
     }
 
+    /**
+     * Запрашивает имя таблицы у пользователя и выводит её структуру и все записи в консоль.
+     */
     private void printTable() {
         System.out.print("Введите имя таблицы: ");
         String tableName = scanner.nextLine().strip();
@@ -146,6 +186,15 @@ public class Main {
         TablePrinter.printRows(schema, rows);
     }
 
+    /**
+     * Преобразует введённую пользователем строку в соответствующий Java-тип
+     * согласно определению столбца в схеме.
+     *
+     * @param input - очищенная строка пользовательского ввода
+     * @param col - описание целевого столбца
+     * @return значение нужного типа или {@code null}, если ввод пуст и столбец допускает {@code null}
+     * @throws IllegalArgumentException если строку не удалось привести к числовому типу
+     */
     private Object parseValue(String input, ColumnDef col) {
         if (input.isEmpty() && col.nullable()) {
             return null;
@@ -158,6 +207,9 @@ public class Main {
         };
     }
 
+    /**
+     * Запрашивает у пользователя значения всех столбцов и добавляет новую запись в таблицу.
+     */
     private void insertRow() {
         System.out.print("Введите имя таблицы: ");
         String tableName = scanner.nextLine().strip();
@@ -175,6 +227,9 @@ public class Main {
         System.out.println("Запись успешно добавлена в таблицу " + tableName + ".");
     }
 
+    /**
+     * Удаляет запись из указанной таблицы по значению её первичного ключа.
+     */
     private void deleteRow() {
         System.out.print("Введите имя таблицы: ");
         String tableName = scanner.nextLine().strip();
@@ -186,6 +241,9 @@ public class Main {
         System.out.println("Удалено записей: " + deleted);
     }
 
+    /**
+     * Запрашивает имя таблицы и столбца, после чего строит по нему вторичный индекс.
+     */
     private void createIndex() {
         System.out.print("Введите имя таблицы: ");
         String tableName = scanner.nextLine().strip();
@@ -194,7 +252,11 @@ public class Main {
         api.createIndex(tableName, colName);
         System.out.println("Индекс по столбцу " + colName + " успешно создан.");
     }
-
+    /**
+     * Отображает результат выполнения SQL-запроса (сообщение или таблицу) в консоли.
+     *
+     * @param result объект результата выполнения запроса
+     */
     private void renderResult(QueryResult result) {
         if (result == null) {
             System.out.println("Нет ответа от исполнителя запросов.");
