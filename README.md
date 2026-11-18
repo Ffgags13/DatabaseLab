@@ -292,3 +292,24 @@ sequenceDiagram
     API->>API: writeLock.unlock()
     API-->>Client: deletedCount
 ```
+
+## Инструкция пользователя
+
+### Запуск приложения
+1. Откройте проект в IntelliJ IDEA (требуется **Java 17+** и библиотека **Gson**).
+2. Запустите метод `main` в классе `src/main/Main.java`.
+3. Все файлы таблиц и индексов автоматически сохраняются в директорию `db_data/` и подгружаются при повторном запуске.
+
+### Примеры поддерживаемых SQL-запросов (режим «1. SQL-консоль»)
+```sql
+CREATE TABLE cars (id INT, brand STRING, price DOUBLE, is_new BOOLEAN)
+INSERT INTO cars VALUES (1, 'Toyota', 25000.0, TRUE)
+INSERT INTO cars (id, brand) VALUES (2, 'BMW')
+SELECT * FROM cars
+SELECT brand, price FROM cars WHERE price > 20000
+CREATE INDEX idx_cars_brand ON cars (brand)
+UPDATE cars SET price = 30000 WHERE id = 2
+DELETE FROM cars WHERE brand = 'Toyota'
+DROP TABLE cars
+```
+Для выхода из SQL-консоли введите `exit`.
